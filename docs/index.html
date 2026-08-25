@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini Fazenda</title>
+<style>
+  :root {
+    --wood-dark: #4c3824;
+    --wood-mid: #6b4e30;
+    --wood-light: #8a6540;
+    --panel: #57402a;
+    --gold: #ffd23c;
+    --coin: #fff08c;
+    --text: #fdf6e3;
+    --danger: #ff7a6e;
+    --ok: #8fe38a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #1c1712;
+    font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #stage {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    max-width: 1100px;
+    max-height: 780px;
+    margin: 0 auto;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game"></canvas>
+</div>
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------
+ * Mini Fazenda - versão browser (Canvas 2D)
+ * Porte do protótipo pygame, com visual redesenhado.
+ * Todo o "art" é desenhado em código (gradientes/formas), sem
+ * assets externos, pra rodar direto em GitHub Pages sem build.
+ * ------------------------------------------------------------------ */
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const BASE_W = 1000, BASE_H = 720;
+let scale = 1;
+
+function resize() {
+  const stage = document.getElementById("stage");
+  const rect = stage.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  scale = Math.min(rect.width / BASE_W, rect.height / BASE_H);
+  canvas.width = Math.round(BASE_W * scale * dpr);
+  canvas.height = Math.round(BASE_H * scale * dpr);
+  canvas.style.width = Math.round(BASE_W * scale) + "px";
+  canvas.style.height = Math.round(BASE_H * scale) + "px";
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+}
+window.addEventListener("resize", resize);
+
+/* ---------------- Grid isométrico ---------------- */
+
+const TILE_W = 128, TILE_H = 74;
+const COLS = 5, ROWS = 4;
+const STARTING_UNLOCKED = 10;
+const ORIGIN_X = BASE_W / 2, ORIGIN_Y = 300;
+
+function tileCenter(col, row) {
+  return [
+    ORIGIN_X + (col - row) * (TILE_W / 2),
+    ORIGIN_Y + (col + row) * (TILE_H / 2),
+  ];
+}
+function pointInTile(px, py, col, row) {
+  const [cx, cy] = tileCenter(col, row);
+  const dx = Math.abs(px - cx) / (TILE_W / 2);
+  const dy = Math.abs(py - cy) / (TILE_H / 2);
+  return dx + dy <= 1.0;
+}
+
+/* ---------------- Plantações ---------------- */
+
+const CROPS = {
+  batata:  { nome: "Batata",   custo: 5,  tempo: 8,  venda: 12, xp: 5,  nivelMin: 1, cor: "#d9a441", cor2: "#8a5a22" },
+  milho:   { nome: "Milho",    custo: 10, tempo: 15, venda: 22, xp: 10, nivelMin: 1, cor: "#f4d35e", cor2: "#c9971f" },
+  morango: { nome: "Morango",  custo: 20, tempo: 25, venda: 45, xp: 18, nivelMin: 3, cor: "#e8434f", cor2: "#7fbf5a" },
+};
+const CROP_ORDER = ["batata", "milho", "morango"];
+
+/* ---------------- Estado ---------------- */
+
+const plots = [];
+for (let i = 0; i < COLS * ROWS; i++) {
+  plots.push({
+    unlocked: i < STARTING_UNLOCKED,
+    custoOuro: 30 + Math.max(0, i - STARTING_UNLOCKED) * 15,
+    crop: null,
+    plantedAt: null,
+  });
+}
+
+const state = {
+  moedas: 40,
+  ouro: 90,
+  nivel: 1,
+  xp: 0,
+  xpMeta: 30,
+  selectedCrop: "batata",
+};
+
+const floaters = [];
+function addFloater(text, pos, color) {
+  floaters.push({ text, pos, color: color || "#fdf6e3", t0: performance.now() });
+}
+
+function cropsDisponiveis() {
+  return CROP_ORDER.filter((c) => CROPS[c].nivelMin <= state.nivel);
+}
+
+function ouroPorNivel(nivel) {
+  return 20 + (nivel - 1) * 10;
+}
+
+function ganharXp(qtd) {
+  state.xp += qtd;
+  while (state.xp >= state.xpMeta) {
+    state.xp -= state.xpMeta;
+    state.nivel += 1;
+    state.xpMeta = 30 + (state.nivel - 1) * 20;
+    const ouroGanho = ouroPorNivel(state.nivel);
+    state.ouro += ouroGanho;
+    addFloater(`Nivel ${state.nivel}!`, [BASE_W / 2 - 40, BASE_H / 2], "#ffd23c");
+    addFloater(`+${ouroGanho} ouro`, [BASE_W / 2 - 30, BASE_H / 2 + 24], "#ffd23c");
+    for (const c of CROP_ORDER) {
+      if (CROPS[c].nivelMin === state.nivel) {
+        addFloater(`${CROPS[c].nome} liberado!`, [BASE_W / 2 - 60, BASE_H / 2 + 48], "#8fe38a");
+      }
+    }
+  }
+}
+
+/* ---------------- Ações ---------------- */
+
+function tentarPlantar(index) {
+  const plot = plots[index];
+  if (!plot.unlocked || plot.crop !== null) return;
+  const cropId = state.selectedCrop;
+  const crop = CROPS[cropId];
+  const col = index % COLS, row = (index / COLS) | 0;
+  const pos = tileCenter(col, row);
+  if (crop.nivelMin > state.nivel) { addFloater("Bloqueado!", pos, "#ff7a6e"); return; }
+  if (state.moedas < crop.custo) { addFloater("Moedas insuf.!", pos, "#ff7a6e"); return; }
+  state.moedas -= crop.custo;
+  plot.crop = cropId;
+  plot.plantedAt = performance.now() / 1000;
+}
+
+function tentarColher(index) {
+  const plot = plots[index];
+  if (plot.crop === null) return;
+  const crop = CROPS[plot.crop];
+  const elapsed = performance.now() / 1000 - plot.plantedAt;
+  if (elapsed < crop.tempo) return;
+  const col = index % COLS, row = (index / COLS) | 0;
+  const pos = tileCenter(col, row);
+  state.moedas += crop.venda;
+  ganharXp(crop.xp);
+  addFloater(`+${crop.venda} moedas`, [pos[0] - 20, pos[1] - 40], "#fff08c");
+  plot.crop = null;
+  plot.plantedAt = null;
+}
+
+function tentarDesbloquear(index) {
+  const plot = plots[index];
+  if (plot.unlocked) return;
+  const custo = plot.custoOuro;
+  const col = index % COLS, row = (index / COLS) | 0;
+  const pos = tileCenter(col, row);
+  if (state.ouro < custo) { addFloater("Ouro insuf.!", pos, "#ff7a6e"); return; }
+  state.ouro -= custo;
+  plot.unlocked = true;
+  addFloater("Terreno novo!", pos, "#8fe38a");
+}
+
+/* ---------------- Layout dos botões de semente ---------------- */
+
+const CROP_BTN_Y = BASE_H - 86, CROP_BTN_W = 230, CROP_BTN_H = 62, CROP_BTN_GAP = 18;
+function cropButtonRect(i) {
+  const totalW = CROP_ORDER.length * CROP_BTN_W + (CROP_ORDER.length - 1) * CROP_BTN_GAP;
+  const left = (BASE_W - totalW) / 2;
+  const x = left + i * (CROP_BTN_W + CROP_BTN_GAP);
+  return { x, y: CROP_BTN_Y, w: CROP_BTN_W, h: CROP_BTN_H };
+}
+function rectContains(r, x, y) {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+/* ---------------- Desenho: helpers ---------------- */
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function diamondPath(cx, cy, w, h) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - h / 2);
+  ctx.lineTo(cx + w / 2, cy);
+  ctx.lineTo(cx, cy + h / 2);
+  ctx.lineTo(cx - w / 2, cy);
+  ctx.closePath();
+}
+
+/* pseudo-random determinístico por índice, pra textura de grama/terra ficar
+   estável entre frames sem precisar guardar estado */
+function hashNoise(seed) {
+  let x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function drawTileGrass(cx, cy, seedBase) {
+  diamondPath(cx, cy, TILE_W, TILE_H);
+  const grad = ctx.createLinearGradient(cx, cy - TILE_H / 2, cx, cy + TILE_H / 2);
+  grad.addColorStop(0, "#8fd66a");
+  grad.addColorStop(1, "#5fb24a");
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  for (let i = 0; i < 14; i++) {
+    const rx = hashNoise(seedBase + i * 3.1) - 0.5;
+    const ry = hashNoise(seedBase + i * 7.7) - 0.5;
+    const px = cx + rx * TILE_W * 0.8;
+    const py = cy + ry * TILE_H * 0.8;
+    ctx.fillStyle = hashNoise(seedBase + i) > 0.5 ? "rgba(255,255,255,0.10)" : "rgba(30,70,20,0.14)";
+    ctx.beginPath();
+    ctx.ellipse(px, py, 3.2, 1.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.strokeStyle = "rgba(30,60,20,0.35)";
+  ctx.lineWidth = 1.5;
+  diamondPath(cx, cy, TILE_W, TILE_H);
+  ctx.stroke();
+}
+
+function drawTileSoil(cx, cy, seedBase) {
+  diamondPath(cx, cy, TILE_W, TILE_H);
+  const grad = ctx.createLinearGradient(cx, cy - TILE_H / 2, cx, cy + TILE_H / 2);
+  grad.addColorStop(0, "#8a5a34");
+  grad.addColorStop(1, "#5c3b1e");
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.strokeStyle = "rgba(40,24,10,0.35)";
+  ctx.lineWidth = 2;
+  for (let r = -2; r <= 2; r++) {
+    ctx.beginPath();
+    ctx.moveTo(cx - TILE_W / 2 + 6, cy + r * 9);
+    ctx.quadraticCurveTo(cx, cy + r * 9 + 5, cx + TILE_W / 2 - 6, cy + r * 9);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.strokeStyle = "rgba(30,15,5,0.4)";
+  ctx.lineWidth = 1.5;
+  diamondPath(cx, cy, TILE_W, TILE_H);
+  ctx.stroke();
+}
+
+function drawTileLocked(cx, cy) {
+  diamondPath(cx, cy, TILE_W, TILE_H);
+  const grad = ctx.createLinearGradient(cx, cy - TILE_H / 2, cx, cy + TILE_H / 2);
+  grad.addColorStop(0, "#4a4640");
+  grad.addColorStop(1, "#302d28");
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.4)";
+  ctx.lineWidth = 1.5;
+  diamondPath(cx, cy, TILE_W, TILE_H);
+  ctx.stroke();
+
+  // cadeado
+  ctx.save();
+  ctx.translate(cx, cy - 6);
+  ctx.fillStyle = "#d8c98a";
+  roundRect(-9, -2, 18, 14, 3);
+  ctx.fill();
+  ctx.strokeStyle = "#d8c98a";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(0, -4, 7, Math.PI, 0);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCrop(cx, cy, cropId, pct) {
+  const crop = CROPS[cropId];
+  const baseY = cy + 6;
+  // sombra
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  ctx.beginPath();
+  ctx.ellipse(cx, baseY + 4, 22, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (pct < 0.45) {
+    // broto
+    const h = 10 + pct * 30;
+    ctx.strokeStyle = "#4f9e3f";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx, baseY);
+    ctx.lineTo(cx, baseY - h);
+    ctx.stroke();
+    ctx.fillStyle = "#6fc95a";
+    ctx.beginPath();
+    ctx.ellipse(cx - 5, baseY - h, 6, 3.5, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + 5, baseY - h, 6, 3.5, 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (pct < 1.0) {
+    // planta crescendo (folhas maiores, cor ainda "verde", sem fruto pleno)
+    for (let i = 0; i < 5; i++) {
+      const ang = (i / 5) * Math.PI * 2;
+      ctx.fillStyle = "#5fb24a";
+      ctx.beginPath();
+      ctx.ellipse(cx + Math.cos(ang) * 10, baseY - 14 + Math.sin(ang) * 6, 9, 5, ang, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#4a9a3a";
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY - 14, 7, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // pronta pra colher: folhas + "fruto" na cor da cultura
+    for (let i = 0; i < 5; i++) {
+      const ang = (i / 5) * Math.PI * 2 + 0.3;
+      ctx.fillStyle = crop.cor2;
+      ctx.beginPath();
+      ctx.ellipse(cx + Math.cos(ang) * 11, baseY - 16 + Math.sin(ang) * 6, 9, 5, ang, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = crop.cor;
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY - 16, 11, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.beginPath();
+    ctx.ellipse(cx - 3, baseY - 20, 3.5, 2.5, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/* ---------------- Decorações ---------------- */
+
+function drawHouse() {
+  const hx = ORIGIN_X + (COLS - ROWS) * (TILE_W / 4);
+  const hy = 78;
+  const w = 150, h = 110;
+  ctx.save();
+  ctx.translate(hx, hy);
+  // sombra
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  ctx.beginPath();
+  ctx.ellipse(0, h + 6, w * 0.5, 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // parede
+  const wallGrad = ctx.createLinearGradient(0, h * 0.35, 0, h);
+  wallGrad.addColorStop(0, "#f3e0b8");
+  wallGrad.addColorStop(1, "#dcc491");
+  ctx.fillStyle = wallGrad;
+  roundRect(-w / 2, h * 0.35, w, h * 0.65, 6);
+  ctx.fill();
+  // telhado
+  ctx.fillStyle = "#b0463a";
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 - 14, h * 0.38);
+  ctx.lineTo(0, -8);
+  ctx.lineTo(w / 2 + 14, h * 0.38);
+  ctx.lineTo(w / 2 - 6, h * 0.38);
+  ctx.lineTo(0, 10);
+  ctx.lineTo(-w / 2 + 6, h * 0.38);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#8f342a";
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 - 14, h * 0.38);
+  ctx.lineTo(0, -8);
+  ctx.lineTo(0, 10);
+  ctx.lineTo(-w / 2 + 6, h * 0.38);
+  ctx.closePath();
+  ctx.fill();
+  // porta
+  ctx.fillStyle = "#6b4426";
+  roundRect(-16, h * 0.62, 32, h * 0.38, 4);
+  ctx.fill();
+  // janela
+  ctx.fillStyle = "#8fd0e0";
+  roundRect(w * 0.2, h * 0.5, 26, 22, 3);
+  ctx.fill();
+  ctx.strokeStyle = "#6b4426";
+  ctx.lineWidth = 2;
+  roundRect(w * 0.2, h * 0.5, 26, 22, 3);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(w * 0.2 + 13, h * 0.5);
+  ctx.lineTo(w * 0.2 + 13, h * 0.5 + 22);
+  ctx.moveTo(w * 0.2, h * 0.5 + 11);
+  ctx.lineTo(w * 0.2 + 26, h * 0.5 + 11);
+  ctx.stroke();
+  ctx.restore();
+
+  drawChicken(hx + 96, hy + h - 6);
+}
+
+function drawChicken(x, y) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = "rgba(0,0,0,0.2)";
+  ctx.beginPath();
+  ctx.ellipse(0, 10, 12, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#f5f0e6";
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 11, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(9, -8, 6, 5.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#e8433a";
+  ctx.beginPath();
+  ctx.moveTo(12, -13);
+  ctx.lineTo(16, -15);
+  ctx.lineTo(13, -9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#f0a23c";
+  ctx.beginPath();
+  ctx.moveTo(15, -8);
+  ctx.lineTo(21, -7);
+  ctx.lineTo(15, -5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#2a2420";
+  ctx.beginPath();
+  ctx.arc(11, -9, 1.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawFencePost(cx, cy) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = "rgba(0,0,0,0.15)";
+  ctx.beginPath();
+  ctx.ellipse(0, 20, 14, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#8a6540";
+  ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(-14, 18); ctx.lineTo(-14, -6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(14, 18); ctx.lineTo(14, -6); ctx.stroke();
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-16, 2); ctx.lineTo(16, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-16, 12); ctx.lineTo(16, 8); ctx.stroke();
+  ctx.restore();
+}
+
+function drawDecorations() {
+  drawHouse();
+  for (let i = -1; i <= COLS; i++) {
+    const [fx, fy] = tileCenter(i, -1);
+    drawFencePost(fx, fy + 6);
+  }
+  for (let i = -1; i <= ROWS; i++) {
+    const [fx, fy] = tileCenter(-1, i);
+    drawFencePost(fx, fy + 6);
+  }
+}
+
+/* ---------------- Cena ---------------- */
+
+function drawScene() {
+  const order = [...Array(COLS * ROWS).keys()].sort(
+    (a, b) => (a % COLS + ((a / COLS) | 0)) - (b % COLS + ((b / COLS) | 0))
+  );
+  const now = performance.now() / 1000;
+  for (const index of order) {
+    const col = index % COLS, row = (index / COLS) | 0;
+    const [cx, cy] = tileCenter(col, row);
+    const plot = plots[index];
+
+    if (!plot.unlocked) {
+      drawTileLocked(cx, cy);
+      ctx.fillStyle = "#ffd23c";
+      ctx.font = "bold 13px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.fillText(`${plot.custoOuro} ouro`, cx, cy + 24);
+      continue;
+    }
+
+    if (plot.crop !== null) drawTileSoil(cx, cy, index * 17.3);
+    else drawTileGrass(cx, cy, index * 17.3);
+
+    if (plot.crop === null) continue;
+
+    const crop = CROPS[plot.crop];
+    const elapsed = now - plot.plantedAt;
+    const pct = Math.max(0, Math.min(1, elapsed / crop.tempo));
+    const pronto = pct >= 1.0;
+
+    if (pronto) {
+      const glow = 3 + Math.abs(((now * 3) % 2) - 1) * 3;
+      ctx.save();
+      ctx.strokeStyle = "#ffff78";
+      ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 2, TILE_W / 2 - glow, 12, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    drawCrop(cx, cy, plot.crop, pct);
+
+    if (!pronto) {
+      const barW = 60, barX = cx - barW / 2, barY = cy + 22;
+      ctx.fillStyle = "rgba(40,30,20,0.7)";
+      roundRect(barX, barY, barW, 6, 3); ctx.fill();
+      ctx.fillStyle = "#7cd66a";
+      roundRect(barX, barY, barW * pct, 6, 3); ctx.fill();
+    }
+  }
+}
+
+/* ---------------- HUD ---------------- */
+
+function drawHud() {
+  const grad = ctx.createLinearGradient(0, 0, 0, 66);
+  grad.addColorStop(0, "#5a4128");
+  grad.addColorStop(1, "#42311f");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, BASE_W, 66);
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(0, 62, BASE_W, 4);
+
+  ctx.fillStyle = "#fdf6e3";
+  ctx.font = "bold 24px Trebuchet MS";
+  ctx.textAlign = "left";
+  ctx.fillText("Mini Fazenda", 18, 30);
+
+  ctx.fillStyle = "#ffd23c";
+  ctx.font = "bold 16px Trebuchet MS";
+  ctx.fillText(`Nivel ${state.nivel}`, 18, 52);
+
+  const barX = 108, barY = 40, barW = 150, barH = 12;
+  ctx.fillStyle = "#2b2015";
+  roundRect(barX, barY, barW, barH, 5); ctx.fill();
+  const pct = Math.max(0, Math.min(1, state.xp / state.xpMeta));
+  const xpGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+  xpGrad.addColorStop(0, "#ff9d3c");
+  xpGrad.addColorStop(1, "#ffd23c");
+  ctx.fillStyle = xpGrad;
+  roundRect(barX, barY, barW * pct, barH, 5); ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.4)";
+  ctx.lineWidth = 1.5;
+  roundRect(barX, barY, barW, barH, 5); ctx.stroke();
+
+  drawCoinIcon(300, 22, "#fff08c", "#c9a52a");
+  ctx.fillStyle = "#fff08c";
+  ctx.font = "bold 17px Trebuchet MS";
+  ctx.fillText(`${state.moedas}`, 320, 27);
+
+  drawCoinIcon(300, 48, "#ffd23c", "#a8791a");
+  ctx.fillStyle = "#ffd23c";
+  ctx.fillText(`${state.ouro}`, 320, 53);
+
+  ctx.fillStyle = "rgba(255,255,255,0.65)";
+  ctx.font = "12px Trebuchet MS";
+  ctx.textAlign = "right";
+  ctx.fillText("Browser edition", BASE_W - 18, 24);
+  ctx.textAlign = "left";
+}
+
+function drawCoinIcon(cx, cy, colorA, colorB) {
+  const grad = ctx.createRadialGradient(cx - 3, cy - 3, 2, cx, cy, 10);
+  grad.addColorStop(0, colorA);
+  grad.addColorStop(1, colorB);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.3)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+/* ---------------- Botões de semente ---------------- */
+
+function drawCropButtons() {
+  const disponiveis = cropsDisponiveis();
+  CROP_ORDER.forEach((cropId, i) => {
+    const r = cropButtonRect(i);
+    const crop = CROPS[cropId];
+    const bloqueado = !disponiveis.includes(cropId);
+    ctx.fillStyle = bloqueado ? "#332821" : "#5a4128";
+    roundRect(r.x, r.y, r.w, r.h, 10);
+    ctx.fill();
+    ctx.strokeStyle = (cropId === state.selectedCrop && !bloqueado) ? "#fdf6e3" : "rgba(0,0,0,0.35)";
+    ctx.lineWidth = 3;
+    roundRect(r.x, r.y, r.w, r.h, 10);
+    ctx.stroke();
+
+    drawCrop(r.x + 32, r.y + 38, cropId, bloqueado ? 0.2 : 1.0);
+
+    if (bloqueado) {
+      ctx.fillStyle = "#9a9a9a";
+      ctx.font = "bold 16px Trebuchet MS";
+      ctx.fillText(`${crop.nome} (Nv.${crop.nivelMin})`, r.x + 60, r.y + 32);
+    } else {
+      ctx.fillStyle = "#fdf6e3";
+      ctx.font = "bold 16px Trebuchet MS";
+      ctx.fillText(crop.nome, r.x + 60, r.y + 22);
+      ctx.fillStyle = "#d8cdb8";
+      ctx.font = "12px Trebuchet MS";
+      ctx.fillText(`${crop.custo} moedas | ${crop.tempo}s | vende ${crop.venda}`, r.x + 60, r.y + 44);
+    }
+  });
+}
+
+/* ---------------- Floaters ---------------- */
+
+function drawFloaters() {
+  const now = performance.now();
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i];
+    const dt = (now - f.t0) / 1000;
+    if (dt > 1.2) { floaters.splice(i, 1); continue; }
+    const offset = dt * 30;
+    ctx.globalAlpha = Math.max(0, 1 - dt / 1.2);
+    ctx.fillStyle = f.color;
+    ctx.font = "bold 17px Trebuchet MS";
+    ctx.fillText(f.text, f.pos[0], f.pos[1] - offset);
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ---------------- Loop principal ---------------- */
+
+function drawSky() {
+  const grad = ctx.createLinearGradient(0, 0, 0, BASE_H);
+  grad.addColorStop(0, "#bfe3ec");
+  grad.addColorStop(0.45, "#cdeab4");
+  grad.addColorStop(1, "#9fd47f");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, BASE_W, BASE_H);
+}
+
+function frame() {
+  drawSky();
+  drawDecorations();
+  drawScene();
+  drawHud();
+  drawCropButtons();
+  drawFloaters();
+  requestAnimationFrame(frame);
+}
+
+/* ---------------- Interação ---------------- */
+
+function handleClick(px, py) {
+  for (let i = 0; i < CROP_ORDER.length; i++) {
+    const r = cropButtonRect(i);
+    if (rectContains(r, px, py)) {
+      const cropId = CROP_ORDER[i];
+      if (cropsDisponiveis().includes(cropId)) state.selectedCrop = cropId;
+      return;
+    }
+  }
+  for (let index = 0; index < COLS * ROWS; index++) {
+    const col = index % COLS, row = (index / COLS) | 0;
+    if (pointInTile(px, py, col, row)) {
+      const plot = plots[index];
+      if (!plot.unlocked) tentarDesbloquear(index);
+      else if (plot.crop === null) tentarPlantar(index);
+      else tentarColher(index);
+      return;
+    }
+  }
+}
+
+canvas.addEventListener("click", (ev) => {
+  const rect = canvas.getBoundingClientRect();
+  const px = ((ev.clientX - rect.left) / rect.width) * BASE_W;
+  const py = ((ev.clientY - rect.top) / rect.height) * BASE_H;
+  handleClick(px, py);
+});
+canvas.addEventListener("touchstart", (ev) => {
+  ev.preventDefault();
+  const t = ev.changedTouches[0];
+  const rect = canvas.getBoundingClientRect();
+  const px = ((t.clientX - rect.left) / rect.width) * BASE_W;
+  const py = ((t.clientY - rect.top) / rect.height) * BASE_H;
+  handleClick(px, py);
+}, { passive: false });
+
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
