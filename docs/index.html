@@ -1,0 +1,1151 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini Fazenda</title>
+<style>
+  :root {
+    --wood-dark: #4c3824;
+    --wood-mid: #6b4e30;
+    --wood-light: #8a6540;
+    --panel: #57402a;
+    --gold: #ffd23c;
+    --coin: #fff08c;
+    --text: #fdf6e3;
+    --danger: #ff7a6e;
+    --ok: #8fe38a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #1c1712;
+    font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #stage {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    max-width: 1100px;
+    max-height: 780px;
+    margin: 0 auto;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game"></canvas>
+</div>
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------
+ * Mini Fazenda - versão browser (Canvas 2D)
+ *
+ * A fazenda inteira é um único grid (estilo Mini Fazenda/FarmVille):
+ * a casa, o silo, as decorações e os animais ocupam células do mesmo
+ * grid onde se planta - não é "plantação de um lado, decoração fixa
+ * do outro". O grid começa pequeno e cresce comprando terrenos
+ * adjacentes, como na expansão por quadras do jogo original.
+ *
+ * Sprites reais: pacote CC0 "Isometric Miniature Farm" (Kenney,
+ * kenney.nl), incluído em docs/assets/farm/ - ver LICENSE.txt ali e
+ * assets/kenney-isometric-farm/ na raiz do repo para o pacote completo.
+ * Cultura sem sprite real disponível (batata, morango) e construções
+ * (casa/silo/galinha) continuam desenhadas em código, no mesmo estilo
+ * de traço grosso, pra não destoar visualmente dos assets reais.
+ * ------------------------------------------------------------------ */
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const BASE_W = 1000, BASE_H = 720;
+let scale = 1;
+
+function resize() {
+  const stage = document.getElementById("stage");
+  const rect = stage.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  scale = Math.min(rect.width / BASE_W, rect.height / BASE_H);
+  canvas.width = Math.round(BASE_W * scale * dpr);
+  canvas.height = Math.round(BASE_H * scale * dpr);
+  canvas.style.width = Math.round(BASE_W * scale) + "px";
+  canvas.style.height = Math.round(BASE_H * scale) + "px";
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+}
+window.addEventListener("resize", resize);
+
+/* ---------------- Assets reais (Kenney CC0) ---------------- */
+
+const ASSET_PATH = "assets/farm/";
+const ASSET_NAMES = [
+  "dirtFarmland_S", "cornYoung_S", "cornYoungDouble_S", "corn_S", "cornDouble_S",
+  "fenceLow_S", "hayBales_S", "sacksCrate_S", "ladderStraight_S",
+];
+const IMG = {};
+let assetsReady = false;
+
+function loadAssets(onDone) {
+  let pending = ASSET_NAMES.length;
+  for (const name of ASSET_NAMES) {
+    const img = new Image();
+    img.onload = img.onerror = () => { pending -= 1; if (pending <= 0) onDone(); };
+    img.src = ASSET_PATH + name + ".png";
+    IMG[name] = img;
+  }
+}
+
+/* ---------------- Grid isométrico (2:1, mesma proporção dos tiles Kenney) ---------------- */
+
+const TILE_W = 128, TILE_H = 64;
+const GRID_N = 30;
+const CENTER = (GRID_N / 2) | 0;
+const START_HALF = 4; // bloco inicial desbloqueado: (START_HALF*2) x (START_HALF*2)
+
+const camera = { x: 0, y: 0 };
+let dragging = false, dragStart = null, cameraStart = null, dragMoved = false;
+
+function tileCenter(col, row) {
+  return [
+    BASE_W / 2 + (col - CENTER - (row - CENTER)) * (TILE_W / 2) + camera.x,
+    260 + (col - CENTER + (row - CENTER)) * (TILE_H / 2) + camera.y,
+  ];
+}
+function pointInTile(px, py, col, row) {
+  const [cx, cy] = tileCenter(col, row);
+  const dx = Math.abs(px - cx) / (TILE_W / 2);
+  const dy = Math.abs(py - cy) / (TILE_H / 2);
+  return dx + dy <= 1.0;
+}
+
+/* ---------------- Plantações ---------------- */
+
+const CROPS = {
+  batata:  { nome: "Batata",   custo: 5,  tempo: 8,  venda: 12, xp: 5,  nivelMin: 1, cor: "#d9a441", cor2: "#8a5a22" },
+  milho:   { nome: "Milho",    custo: 10, tempo: 15, venda: 22, xp: 10, nivelMin: 1, cor: "#f4d35e", cor2: "#c9971f" },
+  morango: { nome: "Morango",  custo: 20, tempo: 25, venda: 45, xp: 18, nivelMin: 3, cor: "#e8434f", cor2: "#7fbf5a" },
+};
+const CROP_ORDER = ["batata", "milho", "morango"];
+
+const DECOS = {
+  feno:    { nome: "Feno",       custo: 8,  img: "hayBales_S" },
+  sacos:   { nome: "Sacos",      custo: 6,  img: "sacksCrate_S" },
+  escada:  { nome: "Escada",     custo: 6,  img: "ladderStraight_S" },
+  cerca:   { nome: "Cerca",      custo: 4,  img: "fenceLow_S" },
+  galinheiro: { nome: "Galinheiro", custo: 15, img: null },
+};
+const DECO_ORDER = ["feno", "sacos", "escada", "cerca", "galinheiro"];
+
+/* ---------------- Estado ---------------- */
+
+function makeCell() {
+  return { unlocked: false, kind: "empty", crop: null, plantedAt: null, pest: false, decoId: null };
+}
+
+const grid = [];
+for (let r = 0; r < GRID_N; r++) {
+  const row = [];
+  for (let c = 0; c < GRID_N; c++) row.push(makeCell());
+  grid.push(row);
+}
+function cellAt(col, row) { return grid[row][col]; }
+
+for (let r = CENTER - START_HALF; r < CENTER + START_HALF; r++) {
+  for (let c = CENTER - START_HALF; c < CENTER + START_HALF; c++) {
+    cellAt(c, r).unlocked = true;
+  }
+}
+
+const HOUSE_COL = CENTER - 1, HOUSE_ROW = CENTER - 1; // ocupa 2x2 a partir daqui
+for (const [dc, dr] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+  cellAt(HOUSE_COL + dc, HOUSE_ROW + dr).kind = "house";
+}
+const SILO_COL = CENTER - 3, SILO_ROW = CENTER - 1;
+cellAt(SILO_COL, SILO_ROW).kind = "house";
+
+function custoDesbloqueio(col, row) {
+  const ring = Math.max(Math.abs(col - CENTER), Math.abs(row - CENTER)) - START_HALF + 1;
+  return 25 + ring * 18;
+}
+
+const state = {
+  moedas: 60,
+  ouro: 120,
+  nivel: 1,
+  xp: 0,
+  xpMeta: 30,
+  tab: "plantar",
+  selectedCrop: "batata",
+  selectedDeco: "feno",
+  event: null,
+  nextEventAt: performance.now() / 1000 + 20,
+};
+
+const floaters = [];
+function addFloater(text, pos, color) {
+  floaters.push({ text, pos, color: color || "#fdf6e3", t0: performance.now() });
+}
+
+function cropsDisponiveis() {
+  return CROP_ORDER.filter((c) => CROPS[c].nivelMin <= state.nivel);
+}
+
+function ouroPorNivel(nivel) {
+  return 20 + (nivel - 1) * 10;
+}
+
+function ganharXp(qtd) {
+  state.xp += qtd;
+  while (state.xp >= state.xpMeta) {
+    state.xp -= state.xpMeta;
+    state.nivel += 1;
+    state.xpMeta = 30 + (state.nivel - 1) * 20;
+    const ouroGanho = ouroPorNivel(state.nivel);
+    state.ouro += ouroGanho;
+    addFloater(`Nivel ${state.nivel}!`, [BASE_W / 2 - 40, BASE_H / 2], "#ffd23c");
+    addFloater(`+${ouroGanho} ouro`, [BASE_W / 2 - 30, BASE_H / 2 + 24], "#ffd23c");
+    for (const c of CROP_ORDER) {
+      if (CROPS[c].nivelMin === state.nivel) {
+        addFloater(`${CROPS[c].nome} liberado!`, [BASE_W / 2 - 60, BASE_H / 2 + 48], "#8fe38a");
+      }
+    }
+  }
+}
+
+/* ---------------- Eventos (encomendas urgentes / pragas) ----------------
+ * A fazenda é persistente (sem "fim de run"), mas de tempos em tempos surge
+ * uma pressão temporária: uma encomenda com prazo (colha X de uma cultura)
+ * ou uma praga isolada numa plantação (espante clicando antes do tempo
+ * acabar, senão a plantação é perdida). É o "tempo real com pressão"
+ * emprestado do 9 Kings, aplicado à fazenda em vez de combate. */
+
+function plantiosAtivos() {
+  const out = [];
+  for (let r = 0; r < GRID_N; r++) {
+    for (let c = 0; c < GRID_N; c++) {
+      const cell = cellAt(c, r);
+      if (cell.unlocked && cell.kind === "crop" && cell.crop && !cell.pest) out.push({ col: c, row: r, cell });
+    }
+  }
+  return out;
+}
+
+function agendarProximoEvento(now) {
+  state.nextEventAt = now + 28 + Math.random() * 24;
+}
+
+function dispararEvento(now) {
+  const ativos = plantiosAtivos();
+  const tipo = ativos.length > 0 && Math.random() < 0.45 ? "praga" : "encomenda";
+
+  if (tipo === "praga") {
+    const alvo = ativos[(Math.random() * ativos.length) | 0];
+    alvo.cell.pest = true;
+    state.event = { type: "praga", col: alvo.col, row: alvo.row, startedAt: now, duration: 10 + Math.random() * 4 };
+    const [px, py] = tileCenter(alvo.col, alvo.row);
+    addFloater("Praga!", [px - 18, py - 50], "#ff7a6e");
+  } else {
+    const disponiveis = cropsDisponiveis();
+    const cropId = disponiveis[(Math.random() * disponiveis.length) | 0];
+    const qtd = 2 + ((Math.random() * 3) | 0);
+    state.event = { type: "encomenda", cropId, qtd, coletado: 0, startedAt: now, duration: 38 + Math.random() * 12 };
+  }
+}
+
+function resolverEventoFalha() {
+  const ev = state.event;
+  if (ev.type === "praga") {
+    const cell = cellAt(ev.col, ev.row);
+    if (cell.pest) {
+      cell.pest = false;
+      cell.kind = "empty";
+      cell.crop = null;
+      cell.plantedAt = null;
+      const [px, py] = tileCenter(ev.col, ev.row);
+      addFloater("Plantação perdida!", [px - 30, py], "#ff7a6e");
+    }
+  }
+  state.event = null;
+}
+
+function espantarPraga(col, row) {
+  const cell = cellAt(col, row);
+  if (!cell.pest) return false;
+  cell.pest = false;
+  state.ouro += 8;
+  const [px, py] = tileCenter(col, row);
+  addFloater("Praga espantada! +8 ouro", [px - 40, py - 20], "#8fe38a");
+  if (state.event && state.event.type === "praga" && state.event.col === col && state.event.row === row) {
+    state.event = null;
+    agendarProximoEvento(performance.now() / 1000);
+  }
+  return true;
+}
+
+function updateEventos(now) {
+  if (state.event === null) {
+    if (now >= state.nextEventAt) dispararEvento(now);
+    return;
+  }
+  if (now - state.event.startedAt > state.event.duration) {
+    resolverEventoFalha();
+    agendarProximoEvento(now);
+  }
+}
+
+/* ---------------- Ações ---------------- */
+
+function tentarPlantar(col, row) {
+  const cell = cellAt(col, row);
+  if (!cell.unlocked || cell.kind !== "empty") return;
+  const cropId = state.selectedCrop;
+  const crop = CROPS[cropId];
+  const pos = tileCenter(col, row);
+  if (crop.nivelMin > state.nivel) { addFloater("Bloqueado!", pos, "#ff7a6e"); return; }
+  if (state.moedas < crop.custo) { addFloater("Moedas insuf.!", pos, "#ff7a6e"); return; }
+  state.moedas -= crop.custo;
+  cell.kind = "crop";
+  cell.crop = cropId;
+  cell.plantedAt = performance.now() / 1000;
+}
+
+function tentarColher(col, row) {
+  const cell = cellAt(col, row);
+  if (cell.kind !== "crop" || cell.crop === null || cell.pest) return;
+  const cropId = cell.crop;
+  const crop = CROPS[cropId];
+  const elapsed = performance.now() / 1000 - cell.plantedAt;
+  if (elapsed < crop.tempo) return;
+  const pos = tileCenter(col, row);
+  state.moedas += crop.venda;
+  ganharXp(crop.xp);
+  addFloater(`+${crop.venda} moedas`, [pos[0] - 20, pos[1] - 40], "#fff08c");
+  cell.kind = "empty";
+  cell.crop = null;
+  cell.plantedAt = null;
+
+  const ev = state.event;
+  if (ev && ev.type === "encomenda" && ev.cropId === cropId) {
+    ev.coletado += 1;
+    if (ev.coletado >= ev.qtd) {
+      const bonus = 12 + ev.qtd * 4;
+      state.ouro += bonus;
+      addFloater(`Encomenda entregue! +${bonus} ouro`, [BASE_W / 2 - 90, 110], "#ffd23c");
+      state.event = null;
+      agendarProximoEvento(performance.now() / 1000);
+    }
+  }
+}
+
+function tentarDecorar(col, row) {
+  const cell = cellAt(col, row);
+  if (!cell.unlocked || cell.kind !== "empty") return;
+  const decoId = state.selectedDeco;
+  const deco = DECOS[decoId];
+  const pos = tileCenter(col, row);
+  if (state.moedas < deco.custo) { addFloater("Moedas insuf.!", pos, "#ff7a6e"); return; }
+  state.moedas -= deco.custo;
+  cell.kind = "deco";
+  cell.decoId = decoId;
+}
+
+function tentarDesbloquear(col, row) {
+  const cell = cellAt(col, row);
+  if (cell.unlocked) return;
+  const custo = custoDesbloqueio(col, row);
+  const pos = tileCenter(col, row);
+  if (state.ouro < custo) { addFloater("Ouro insuf.!", pos, "#ff7a6e"); return; }
+  state.ouro -= custo;
+  cell.unlocked = true;
+  addFloater("Terreno novo!", pos, "#8fe38a");
+}
+
+/* ---------------- Layout da paleta (abas + itens) ---------------- */
+
+const TAB_Y = BASE_H - 108, TAB_H = 26;
+const ITEM_Y = BASE_H - 78, ITEM_W = 172, ITEM_H = 62, ITEM_GAP = 12;
+
+function tabRect(i) {
+  const tabs = ["plantar", "decorar"];
+  const w = 110;
+  const left = BASE_W / 2 - tabs.length * w / 2;
+  return { x: left + i * w, y: TAB_Y, w, h: TAB_H, id: tabs[i] };
+}
+function itemList() {
+  return state.tab === "plantar" ? CROP_ORDER : DECO_ORDER;
+}
+function itemRect(i) {
+  const items = itemList();
+  const totalW = items.length * ITEM_W + (items.length - 1) * ITEM_GAP;
+  const left = (BASE_W - totalW) / 2;
+  return { x: left + i * (ITEM_W + ITEM_GAP), y: ITEM_Y, w: ITEM_W, h: ITEM_H };
+}
+function rectContains(r, x, y) {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+/* ---------------- Desenho: helpers ---------------- */
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function diamondPath(cx, cy, w, h) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - h / 2);
+  ctx.lineTo(cx + w / 2, cy);
+  ctx.lineTo(cx, cy + h / 2);
+  ctx.lineTo(cx - w / 2, cy);
+  ctx.closePath();
+}
+
+/* pseudo-random determinístico por índice, pra textura de grama ficar
+   estável entre frames sem precisar guardar estado */
+function hashNoise(seed) {
+  let x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/* Ancora um sprite Kenney (canvas nativo 256x512, piso nos 128px
+   inferiores) no centro (cx,cy) de uma célula do grid - mesma
+   convenção pra chão, plantação e decoração. */
+function drawIsoSprite(name, cx, cy, footprintW) {
+  const img = IMG[name];
+  if (!img || !img.complete || img.naturalWidth === 0) return;
+  const w = TILE_W * (footprintW || 1);
+  const h = w * (img.height / img.width);
+  ctx.drawImage(img, cx - w / 2, cy + TILE_H / 2 - h, w, h);
+}
+
+function drawTileGrass(cx, cy, seedBase) {
+  diamondPath(cx, cy, TILE_W, TILE_H);
+  const grad = ctx.createLinearGradient(cx, cy - TILE_H / 2, cx, cy + TILE_H / 2);
+  grad.addColorStop(0, "#8fd66a");
+  grad.addColorStop(1, "#5fb24a");
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  for (let i = 0; i < 8; i++) {
+    const rx = hashNoise(seedBase + i * 3.1) - 0.5;
+    const ry = hashNoise(seedBase + i * 7.7) - 0.5;
+    const px = cx + rx * TILE_W * 0.8;
+    const py = cy + ry * TILE_H * 0.8;
+    ctx.fillStyle = hashNoise(seedBase + i) > 0.5 ? "rgba(255,255,255,0.10)" : "rgba(30,70,20,0.14)";
+    ctx.beginPath();
+    ctx.ellipse(px, py, 3.2, 1.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.strokeStyle = "rgba(30,60,20,0.35)";
+  ctx.lineWidth = 1.5;
+  diamondPath(cx, cy, TILE_W, TILE_H);
+  ctx.stroke();
+}
+
+function drawTileLocked(cx, cy) {
+  diamondPath(cx, cy, TILE_W, TILE_H);
+  const grad = ctx.createLinearGradient(cx, cy - TILE_H / 2, cx, cy + TILE_H / 2);
+  grad.addColorStop(0, "#4a4640");
+  grad.addColorStop(1, "#302d28");
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.4)";
+  ctx.lineWidth = 1.5;
+  diamondPath(cx, cy, TILE_W, TILE_H);
+  ctx.stroke();
+
+  ctx.save();
+  ctx.translate(cx, cy - 4);
+  ctx.fillStyle = "#d8c98a";
+  roundRect(-8, -1, 16, 12, 3);
+  ctx.fill();
+  ctx.strokeStyle = "#d8c98a";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(0, -3, 6, Math.PI, 0);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* Estilo "Mini Fazenda": contorno grosso escuro + preenchimento saturado,
+   cada cultura sem sprite real tem silhueta própria em 4 estágios. */
+const OUTLINE = "#2b1d12";
+const OUTLINE_W = 2.2;
+
+function fillStroke(fillColor) {
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = OUTLINE_W;
+  ctx.stroke();
+}
+
+function leafCluster(cx, cy, n, radius, leafW, leafH, color) {
+  for (let i = 0; i < n; i++) {
+    const ang = (i / n) * Math.PI * 2 + 0.2;
+    ctx.beginPath();
+    ctx.ellipse(cx + Math.cos(ang) * radius, cy + Math.sin(ang) * radius * 0.6, leafW, leafH, ang, 0, Math.PI * 2);
+    fillStroke(color);
+  }
+}
+
+function drawCropShadow(cx, baseY) {
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  ctx.beginPath();
+  ctx.ellipse(cx, baseY + 4, 20, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawBatata(cx, cy, stage) {
+  const baseY = cy + 6;
+  drawCropShadow(cx, baseY);
+  if (stage === 0) {
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY, 12, 5, 0, 0, Math.PI * 2);
+    fillStroke("#6b4526");
+    leafCluster(cx, baseY - 6, 2, 4, 4, 2.2, "#6fc95a");
+  } else if (stage === 1) {
+    leafCluster(cx, baseY - 12, 5, 8, 7, 4, "#5fb24a");
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY - 12, 6, 5, 0, 0, Math.PI * 2);
+    fillStroke("#4a9a3a");
+  } else if (stage === 2) {
+    leafCluster(cx, baseY - 15, 6, 11, 8, 4.5, "#5fb24a");
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY - 15, 7, 6, 0, 0, Math.PI * 2);
+    fillStroke("#4a9a3a");
+  } else {
+    leafCluster(cx, baseY - 16, 5, 10, 7.5, 4, "#4a9a3a");
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY, 18, 6, 0, 0, Math.PI * 2);
+    fillStroke("#6b4526");
+    const spuds = [[-8, -2, 8, 6], [7, -1, 7, 5.5], [0, 2, 6, 5]];
+    for (const [dx, dy, w, h] of spuds) {
+      ctx.beginPath();
+      ctx.ellipse(cx + dx, baseY + dy, w, h, 0.15, 0, Math.PI * 2);
+      fillStroke("#d9a441");
+      ctx.fillStyle = "#8a5a22";
+      ctx.beginPath(); ctx.arc(cx + dx - w * 0.3, baseY + dy, 1.1, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + dx + w * 0.3, baseY + dy + h * 0.2, 1.1, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
+const CORN_STAGE_SPRITE = ["cornYoung_S", "cornYoungDouble_S", "corn_S", "cornDouble_S"];
+function drawMilho(cx, cy, stage) {
+  drawCropShadow(cx, cy + 6);
+  drawIsoSprite(CORN_STAGE_SPRITE[stage], cx, cy, 0.85);
+}
+
+function drawMorango(cx, cy, stage) {
+  const baseY = cy + 6;
+  drawCropShadow(cx, baseY);
+  leafCluster(cx, baseY - 4, 3, 7, 6, 3.5, "#4a9a3a");
+  if (stage === 1) {
+    for (let i = 0; i < 3; i++) {
+      const ang = (i / 3) * Math.PI * 2;
+      const px = cx + Math.cos(ang) * 8, py = baseY - 6 + Math.sin(ang) * 4;
+      ctx.beginPath();
+      for (let p = 0; p < 5; p++) {
+        const a = (p / 5) * Math.PI * 2;
+        ctx.ellipse(px + Math.cos(a) * 2.6, py + Math.sin(a) * 2.6, 1.8, 1.2, a, 0, Math.PI * 2);
+      }
+      fillStroke("#fdf6e3");
+    }
+  } else if (stage === 2) {
+    for (const [dx, dy] of [[-7, -2], [7, -3], [0, 3]]) {
+      ctx.beginPath();
+      ctx.ellipse(cx + dx, baseY - 4 + dy, 4, 5, 0, 0, Math.PI * 2);
+      fillStroke("#7fbf5a");
+    }
+  } else if (stage === 3) {
+    for (const [dx, dy] of [[-8, -1], [8, -2], [0, 5]]) {
+      const py = baseY - 4 + dy;
+      ctx.beginPath();
+      ctx.moveTo(cx + dx, py - 6);
+      ctx.quadraticCurveTo(cx + dx + 6, py - 2, cx + dx, py + 7);
+      ctx.quadraticCurveTo(cx + dx - 6, py - 2, cx + dx, py - 6);
+      fillStroke("#e8434f");
+      ctx.fillStyle = "#f4d35e";
+      for (const [sx, sy] of [[-2, -1], [2, 1], [0, 3], [-1.5, 2]]) {
+        ctx.beginPath(); ctx.arc(cx + dx + sx, py + sy, 0.7, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.ellipse(cx + dx, py - 6, 3.5, 2, 0, 0, Math.PI * 2);
+      fillStroke("#5fb24a");
+    }
+  }
+}
+
+const CROP_DRAWERS = { batata: drawBatata, milho: drawMilho, morango: drawMorango };
+
+function drawCrop(cx, cy, cropId, pct) {
+  const stage = pct >= 1.0 ? 3 : pct >= 0.62 ? 2 : pct >= 0.28 ? 1 : 0;
+  CROP_DRAWERS[cropId](cx, cy, stage);
+}
+
+/* ---------------- Construções / decorações ---------------- */
+
+function drawHouse(cx, cy) {
+  const w = 150, h = 110;
+  ctx.save();
+  ctx.translate(cx, cy + 44);
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  ctx.beginPath();
+  ctx.ellipse(0, h + 6, w * 0.5, 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  roundRect(-w / 2, h * 0.35, w, h * 0.65, 8);
+  fillStroke("#f6dfa3");
+  ctx.strokeStyle = "rgba(150,110,60,0.5)";
+  ctx.lineWidth = 1.5;
+  for (let ly = h * 0.48; ly < h * 0.95; ly += 12) {
+    ctx.beginPath(); ctx.moveTo(-w / 2 + 4, ly); ctx.lineTo(w / 2 - 4, ly); ctx.stroke();
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 - 18, h * 0.4);
+  ctx.lineTo(0, -14);
+  ctx.lineTo(w / 2 + 18, h * 0.4);
+  ctx.lineTo(w / 2 - 4, h * 0.4);
+  ctx.lineTo(0, 8);
+  ctx.lineTo(-w / 2 + 4, h * 0.4);
+  ctx.closePath();
+  fillStroke("#d1483a");
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 - 18, h * 0.4);
+  ctx.lineTo(0, -14);
+  ctx.lineTo(0, 8);
+  ctx.lineTo(-w / 2 + 4, h * 0.4);
+  ctx.closePath();
+  fillStroke("#a5352a");
+  ctx.beginPath();
+  roundRect(w * 0.18, -6, 16, 26, 2);
+  fillStroke("#c78a5a");
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.beginPath(); ctx.ellipse(w * 0.18 + 20, -18, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(w * 0.18 + 28, -28, 8, 6, 0, 0, Math.PI * 2); ctx.fill();
+
+  ctx.beginPath();
+  roundRect(-16, h * 0.6, 32, h * 0.4, 10);
+  fillStroke("#8a5a34");
+  ctx.fillStyle = "#f4d35e";
+  ctx.beginPath(); ctx.arc(10, h * 0.6 + h * 0.2, 2, 0, Math.PI * 2); ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(w * 0.24, h * 0.55, 15, 0, Math.PI * 2);
+  fillStroke("#a7dbe8");
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = OUTLINE_W;
+  ctx.beginPath();
+  ctx.moveTo(w * 0.24 - 15, h * 0.55); ctx.lineTo(w * 0.24 + 15, h * 0.55);
+  ctx.moveTo(w * 0.24, h * 0.55 - 15); ctx.lineTo(w * 0.24, h * 0.55 + 15);
+  ctx.stroke();
+  ctx.beginPath();
+  roundRect(w * 0.24 - 16, h * 0.55 + 16, 32, 8, 3);
+  fillStroke("#8a5a34");
+  for (const dx of [-9, 0, 9]) {
+    ctx.beginPath();
+    ctx.arc(w * 0.24 + dx, h * 0.55 + 14, 3, 0, Math.PI * 2);
+    fillStroke(dx === 0 ? "#f4d35e" : "#e8434f");
+  }
+  ctx.restore();
+
+  drawChicken(cx + 96, cy + h - 6 + 44);
+}
+
+function drawSilo(cx, cy) {
+  ctx.save();
+  ctx.translate(cx, cy + 20);
+  ctx.fillStyle = "rgba(0,0,0,0.16)";
+  ctx.beginPath();
+  ctx.ellipse(0, 40, 20, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  roundRect(-18, -14, 36, 54, 16);
+  fillStroke("#d8dde0");
+  ctx.strokeStyle = "rgba(120,130,135,0.5)";
+  ctx.lineWidth = 1.5;
+  for (const ly of [4, 16, 28]) {
+    ctx.beginPath(); ctx.moveTo(-18, ly); ctx.lineTo(18, ly); ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(-22, -12);
+  ctx.lineTo(0, -38);
+  ctx.lineTo(22, -12);
+  ctx.closePath();
+  fillStroke("#b0463a");
+  ctx.beginPath();
+  ctx.arc(0, -38, 3, 0, Math.PI * 2);
+  fillStroke("#8a5a34");
+  ctx.restore();
+}
+
+function drawChicken(x, y) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = "rgba(0,0,0,0.2)";
+  ctx.beginPath();
+  ctx.ellipse(0, 10, 12, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 11, 9, 0, 0, Math.PI * 2);
+  fillStroke("#f5f0e6");
+  ctx.beginPath();
+  ctx.ellipse(9, -8, 6, 5.5, 0, 0, Math.PI * 2);
+  fillStroke("#f5f0e6");
+  ctx.beginPath();
+  ctx.moveTo(12, -13);
+  ctx.lineTo(16, -15);
+  ctx.lineTo(13, -9);
+  ctx.closePath();
+  fillStroke("#e8433a");
+  ctx.beginPath();
+  ctx.moveTo(15, -8);
+  ctx.lineTo(21, -7);
+  ctx.lineTo(15, -5);
+  ctx.closePath();
+  fillStroke("#f0a23c");
+  ctx.fillStyle = "#2a2420";
+  ctx.beginPath();
+  ctx.arc(11, -9, 1.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawGalinheiro(cx, cy) {
+  drawIsoSprite("hayBales_S", cx, cy, 0.9);
+  drawChicken(cx + 6, cy - 6);
+}
+
+function drawDeco(cx, cy, decoId) {
+  const deco = DECOS[decoId];
+  if (decoId === "galinheiro") { drawGalinheiro(cx, cy); return; }
+  drawIsoSprite(deco.img, cx, cy, 0.8);
+}
+
+function drawPest(cx, cy, now) {
+  const bob = Math.sin(now * 8) * 3;
+  ctx.save();
+  ctx.translate(cx, cy + bob);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 8, 6, 0, 0, Math.PI * 2);
+  fillStroke("#5a4a8a");
+  ctx.beginPath();
+  ctx.arc(-6, -1, 3.5, 0, Math.PI * 2);
+  fillStroke("#5a4a8a");
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 1.5;
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(-2, 5 * s * 0.6);
+    ctx.lineTo(6, 8 * s);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#fdf6e3";
+  ctx.beginPath(); ctx.arc(-7.5, -2, 1.1, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+/* ---------------- Cena ---------------- */
+
+function visibleRange() {
+  const pad = 3;
+  const corners = [tileCenter(0, 0), tileCenter(GRID_N, 0), tileCenter(0, GRID_N), tileCenter(GRID_N, GRID_N)];
+  let minC = 0, maxC = GRID_N - 1, minR = 0, maxR = GRID_N - 1;
+  // aproximação simples: converte os 4 cantos da tela em coords de grid e limita
+  const approx = [];
+  for (const [sx, sy] of [[0, 0], [BASE_W, 0], [0, BASE_H], [BASE_W, BASE_H]]) {
+    const relX = (sx - BASE_W / 2 - camera.x) / (TILE_W / 2);
+    const relY = (sy - 260 - camera.y) / (TILE_H / 2);
+    const col = CENTER + (relX + relY) / 2;
+    const row = CENTER + (relY - relX) / 2;
+    approx.push(col, row);
+  }
+  minC = Math.max(0, Math.floor(Math.min(...approx.filter((_, i) => i % 2 === 0))) - pad);
+  maxC = Math.min(GRID_N - 1, Math.ceil(Math.max(...approx.filter((_, i) => i % 2 === 0))) + pad);
+  minR = Math.max(0, Math.floor(Math.min(...approx.filter((_, i) => i % 2 === 1))) - pad);
+  maxR = Math.min(GRID_N - 1, Math.ceil(Math.max(...approx.filter((_, i) => i % 2 === 1))) + pad);
+  return { minC, maxC, minR, maxR };
+}
+
+function drawScene() {
+  const now = performance.now() / 1000;
+  const { minC, maxC, minR, maxR } = visibleRange();
+  const cells = [];
+  for (let r = minR; r <= maxR; r++) {
+    for (let c = minC; c <= maxC; c++) cells.push([c, r]);
+  }
+  cells.sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
+
+  /* Passada 1: só o chão. Objetos altos (casa, plantação) ultrapassam os
+     limites da própria célula, então se desenhássemos chão e objeto célula
+     a célula, o chão de uma célula "mais à frente" pintaria por cima do
+     topo de um objeto alto vizinho. Chão inteiro primeiro, objetos depois,
+     evita esse bug de profundidade. */
+  for (const [col, row] of cells) {
+    const [cx, cy] = tileCenter(col, row);
+    const cell = cellAt(col, row);
+    if (!cell.unlocked) {
+      drawTileLocked(cx, cy);
+      ctx.fillStyle = "#ffd23c";
+      ctx.font = "bold 12px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.fillText(`${custoDesbloqueio(col, row)}`, cx, cy + 3);
+    } else {
+      drawTileGrass(cx, cy, (col * 131 + row * 977) * 0.013);
+    }
+  }
+
+  /* Passada 2: objetos, na ordem de profundidade isométrica. */
+  for (const [col, row] of cells) {
+    const [cx, cy] = tileCenter(col, row);
+    const cell = cellAt(col, row);
+    if (!cell.unlocked) continue;
+
+    if (cell.kind === "house") {
+      if (col === HOUSE_COL && row === HOUSE_ROW) drawHouse(cx, cy);
+      else if (col === SILO_COL && row === SILO_ROW) drawSilo(cx, cy);
+      continue;
+    }
+
+    if (cell.kind === "deco") {
+      drawDeco(cx, cy, cell.decoId);
+      continue;
+    }
+
+    if (cell.kind !== "crop" || cell.crop === null) continue;
+
+    if (cell.crop !== "milho") drawIsoSprite("dirtFarmland_S", cx, cy, 1);
+    const crop = CROPS[cell.crop];
+    const elapsed = now - cell.plantedAt;
+    const pct = Math.max(0, Math.min(1, elapsed / crop.tempo));
+    const pronto = pct >= 1.0;
+
+    if (pronto) {
+      const glow = 3 + Math.abs(((now * 3) % 2) - 1) * 3;
+      ctx.save();
+      ctx.strokeStyle = "#ffff78";
+      ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 2, TILE_W / 2 - glow, 12, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    drawCrop(cx, cy, cell.crop, pct);
+
+    if (!pronto) {
+      const barW = 50, barX = cx - barW / 2, barY = cy + 18;
+      ctx.fillStyle = "rgba(40,30,20,0.7)";
+      roundRect(barX, barY, barW, 5, 3); ctx.fill();
+      ctx.fillStyle = "#7cd66a";
+      roundRect(barX, barY, barW * pct, 5, 3); ctx.fill();
+    }
+
+    if (cell.pest) drawPest(cx, cy - 26, now);
+  }
+}
+
+/* ---------------- HUD ---------------- */
+
+function drawHud() {
+  const grad = ctx.createLinearGradient(0, 0, 0, 66);
+  grad.addColorStop(0, "#5a4128");
+  grad.addColorStop(1, "#42311f");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, BASE_W, 66);
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(0, 62, BASE_W, 4);
+
+  ctx.fillStyle = "#fdf6e3";
+  ctx.font = "bold 24px Trebuchet MS";
+  ctx.textAlign = "left";
+  ctx.fillText("Mini Fazenda", 18, 30);
+
+  ctx.fillStyle = "#ffd23c";
+  ctx.font = "bold 16px Trebuchet MS";
+  ctx.fillText(`Nivel ${state.nivel}`, 18, 52);
+
+  const barX = 108, barY = 40, barW = 150, barH = 12;
+  ctx.fillStyle = "#2b2015";
+  roundRect(barX, barY, barW, barH, 5); ctx.fill();
+  const pct = Math.max(0, Math.min(1, state.xp / state.xpMeta));
+  const xpGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+  xpGrad.addColorStop(0, "#ff9d3c");
+  xpGrad.addColorStop(1, "#ffd23c");
+  ctx.fillStyle = xpGrad;
+  roundRect(barX, barY, barW * pct, barH, 5); ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.4)";
+  ctx.lineWidth = 1.5;
+  roundRect(barX, barY, barW, barH, 5); ctx.stroke();
+
+  drawCoinIcon(300, 22, "#fff08c", "#c9a52a");
+  ctx.fillStyle = "#fff08c";
+  ctx.font = "bold 17px Trebuchet MS";
+  ctx.fillText(`${state.moedas}`, 320, 27);
+
+  drawCoinIcon(300, 48, "#ffd23c", "#a8791a");
+  ctx.fillStyle = "#ffd23c";
+  ctx.fillText(`${state.ouro}`, 320, 53);
+
+  ctx.fillStyle = "rgba(255,255,255,0.65)";
+  ctx.font = "12px Trebuchet MS";
+  ctx.textAlign = "right";
+  ctx.fillText("Arraste pra explorar a fazenda", BASE_W - 18, 24);
+  ctx.textAlign = "left";
+}
+
+function drawCoinIcon(cx, cy, colorA, colorB) {
+  const grad = ctx.createRadialGradient(cx - 3, cy - 3, 2, cx, cy, 10);
+  grad.addColorStop(0, colorA);
+  grad.addColorStop(1, colorB);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.3)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+/* ---------------- Paleta ---------------- */
+
+function drawPalette() {
+  const tabs = ["plantar", "decorar"];
+  tabs.forEach((id, i) => {
+    const r = tabRect(i);
+    ctx.fillStyle = state.tab === id ? "#5a4128" : "#3a2c1c";
+    roundRect(r.x, r.y, r.w, r.h, 6); ctx.fill();
+    ctx.fillStyle = state.tab === id ? "#fdf6e3" : "#a89678";
+    ctx.font = "bold 13px Trebuchet MS";
+    ctx.textAlign = "center";
+    ctx.fillText(id === "plantar" ? "Plantar" : "Decorar", r.x + r.w / 2, r.y + 18);
+  });
+  ctx.textAlign = "left";
+
+  const items = itemList();
+  items.forEach((id, i) => {
+    const r = itemRect(i);
+    const selecionado = state.tab === "plantar" ? id === state.selectedCrop : id === state.selectedDeco;
+    let bloqueado = false;
+    if (state.tab === "plantar") bloqueado = CROPS[id].nivelMin > state.nivel;
+
+    ctx.fillStyle = bloqueado ? "#332821" : "#5a4128";
+    roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
+    ctx.strokeStyle = (selecionado && !bloqueado) ? "#fdf6e3" : "rgba(0,0,0,0.35)";
+    ctx.lineWidth = 3;
+    roundRect(r.x, r.y, r.w, r.h, 10); ctx.stroke();
+
+    if (state.tab === "plantar") {
+      drawCrop(r.x + 30, r.y + 36, id, bloqueado ? 0.2 : 1.0);
+      const crop = CROPS[id];
+      if (bloqueado) {
+        ctx.fillStyle = "#9a9a9a";
+        ctx.font = "bold 14px Trebuchet MS";
+        ctx.fillText(`${crop.nome} (Nv.${crop.nivelMin})`, r.x + 56, r.y + 30);
+      } else {
+        ctx.fillStyle = "#fdf6e3";
+        ctx.font = "bold 15px Trebuchet MS";
+        ctx.fillText(crop.nome, r.x + 56, r.y + 21);
+        ctx.fillStyle = "#d8cdb8";
+        ctx.font = "11px Trebuchet MS";
+        ctx.fillText(`${crop.custo} moedas | ${crop.tempo}s`, r.x + 56, r.y + 40);
+      }
+    } else {
+      drawDeco(r.x + 30, r.y + 44, id);
+      const deco = DECOS[id];
+      ctx.fillStyle = "#fdf6e3";
+      ctx.font = "bold 15px Trebuchet MS";
+      ctx.fillText(deco.nome, r.x + 56, r.y + 24);
+      ctx.fillStyle = "#d8cdb8";
+      ctx.font = "11px Trebuchet MS";
+      ctx.fillText(`${deco.custo} moedas`, r.x + 56, r.y + 42);
+    }
+  });
+}
+
+/* ---------------- Floaters ---------------- */
+
+function drawFloaters() {
+  const now = performance.now();
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i];
+    const dt = (now - f.t0) / 1000;
+    if (dt > 1.2) { floaters.splice(i, 1); continue; }
+    const offset = dt * 30;
+    ctx.globalAlpha = Math.max(0, 1 - dt / 1.2);
+    ctx.fillStyle = f.color;
+    ctx.font = "bold 17px Trebuchet MS";
+    ctx.fillText(f.text, f.pos[0], f.pos[1] - offset);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawEventBanner(now) {
+  const ev = state.event;
+  if (!ev) return;
+  const pct = Math.max(0, 1 - (now - ev.startedAt) / ev.duration);
+  const y = 70, w = 360, h = 40, x = BASE_W / 2 - w / 2;
+  ctx.save();
+  ctx.beginPath();
+  roundRect(x, y, w, h, 10);
+  fillStroke(ev.type === "praga" ? "#5a4a8a" : "#3f6b3a");
+  ctx.fillStyle = "#fdf6e3";
+  ctx.font = "bold 14px Trebuchet MS";
+  ctx.textAlign = "center";
+  const label = ev.type === "praga"
+    ? "Praga na lavoura! Clique na planta pra espantar"
+    : `Encomenda: ${ev.coletado}/${ev.qtd} ${CROPS[ev.cropId].nome}`;
+  ctx.fillText(label, BASE_W / 2, y + 18);
+  const barW = w - 20, barX = x + 10, barY = y + 26;
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  roundRect(barX, barY, barW, 6, 3); ctx.fill();
+  ctx.fillStyle = ev.type === "praga" ? "#c7a3ff" : "#ffd23c";
+  roundRect(barX, barY, barW * pct, 6, 3); ctx.fill();
+  ctx.textAlign = "left";
+  ctx.restore();
+}
+
+/* ---------------- Loop principal ---------------- */
+
+function drawSky() {
+  const grad = ctx.createLinearGradient(0, 0, 0, BASE_H);
+  grad.addColorStop(0, "#bfe3ec");
+  grad.addColorStop(0.45, "#cdeab4");
+  grad.addColorStop(1, "#9fd47f");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, BASE_W, BASE_H);
+}
+
+function frame() {
+  const now = performance.now() / 1000;
+  updateEventos(now);
+  drawSky();
+  drawScene();
+  drawHud();
+  drawEventBanner(now);
+  drawPalette();
+  drawFloaters();
+  requestAnimationFrame(frame);
+}
+
+/* ---------------- Interação ---------------- */
+
+function cellUnderPoint(px, py) {
+  const { minC, maxC, minR, maxR } = visibleRange();
+  for (let row = minR; row <= maxR; row++) {
+    for (let col = minC; col <= maxC; col++) {
+      if (pointInTile(px, py, col, row)) return { col, row };
+    }
+  }
+  return null;
+}
+
+function handleClick(px, py) {
+  for (let i = 0; i < 2; i++) {
+    const r = tabRect(i);
+    if (rectContains(r, px, py)) { state.tab = r.id; return; }
+  }
+  const items = itemList();
+  for (let i = 0; i < items.length; i++) {
+    const r = itemRect(i);
+    if (rectContains(r, px, py)) {
+      const id = items[i];
+      if (state.tab === "plantar") {
+        if (cropsDisponiveis().includes(id)) state.selectedCrop = id;
+      } else {
+        state.selectedDeco = id;
+      }
+      return;
+    }
+  }
+
+  const hit = cellUnderPoint(px, py);
+  if (!hit) return;
+  const { col, row } = hit;
+  const cell = cellAt(col, row);
+  if (cell.pest) { espantarPraga(col, row); return; }
+  if (!cell.unlocked) { tentarDesbloquear(col, row); return; }
+  if (cell.kind === "house") return;
+  if (cell.kind === "crop") { tentarColher(col, row); return; }
+  if (cell.kind === "deco") return;
+  if (state.tab === "plantar") tentarPlantar(col, row);
+  else tentarDecorar(col, row);
+}
+
+function toGameCoords(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return [((clientX - rect.left) / rect.width) * BASE_W, ((clientY - rect.top) / rect.height) * BASE_H];
+}
+
+canvas.addEventListener("mousedown", (ev) => {
+  dragging = true; dragMoved = false;
+  dragStart = [ev.clientX, ev.clientY];
+  cameraStart = { x: camera.x, y: camera.y };
+});
+window.addEventListener("mousemove", (ev) => {
+  if (!dragging) return;
+  const dx = ev.clientX - dragStart[0], dy = ev.clientY - dragStart[1];
+  if (Math.abs(dx) + Math.abs(dy) > 4) dragMoved = true;
+  camera.x = cameraStart.x + dx / scale;
+  camera.y = cameraStart.y + dy / scale;
+});
+window.addEventListener("mouseup", (ev) => {
+  if (dragging && !dragMoved) {
+    const [px, py] = toGameCoords(ev.clientX, ev.clientY);
+    handleClick(px, py);
+  }
+  dragging = false;
+});
+
+let touchStart = null;
+canvas.addEventListener("touchstart", (ev) => {
+  ev.preventDefault();
+  const t = ev.changedTouches[0];
+  touchStart = [t.clientX, t.clientY];
+  cameraStart = { x: camera.x, y: camera.y };
+  dragMoved = false;
+}, { passive: false });
+canvas.addEventListener("touchmove", (ev) => {
+  ev.preventDefault();
+  const t = ev.changedTouches[0];
+  const dx = t.clientX - touchStart[0], dy = t.clientY - touchStart[1];
+  if (Math.abs(dx) + Math.abs(dy) > 4) dragMoved = true;
+  camera.x = cameraStart.x + dx / scale;
+  camera.y = cameraStart.y + dy / scale;
+}, { passive: false });
+canvas.addEventListener("touchend", (ev) => {
+  ev.preventDefault();
+  if (!dragMoved) {
+    const t = ev.changedTouches[0];
+    const [px, py] = toGameCoords(t.clientX, t.clientY);
+    handleClick(px, py);
+  }
+}, { passive: false });
+
+resize();
+loadAssets(() => { assetsReady = true; });
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
