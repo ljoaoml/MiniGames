@@ -113,6 +113,7 @@ for (let i = 0; i < COLS * ROWS; i++) {
     custoOuro: 30 + Math.max(0, i - STARTING_UNLOCKED) * 15,
     crop: null,
     plantedAt: null,
+    pest: false,
   });
 }
 
@@ -123,7 +124,80 @@ const state = {
   xp: 0,
   xpMeta: 30,
   selectedCrop: "batata",
+  event: null,
+  nextEventAt: performance.now() / 1000 + 20,
 };
+
+/* ---------------- Eventos (encomendas urgentes / pragas) ----------------
+ * A fazenda é persistente (sem "fim de run"), mas de tempos em tempos surge
+ * uma pressão temporária: uma encomenda com prazo (colha X de uma cultura)
+ * ou uma praga isolada numa plantação (espante clicando antes do tempo
+ * acabar, senão a plantação é perdida). É o "tempo real com pressão"
+ * emprestado do 9 Kings, aplicado à fazenda em vez de combate. */
+
+function agendarProximoEvento(now) {
+  state.nextEventAt = now + 28 + Math.random() * 24;
+}
+
+function dispararEvento(now) {
+  const plantadosCrescendo = plots
+    .map((p, i) => ({ p, i }))
+    .filter(({ p }) => p.unlocked && p.crop !== null && !p.pest);
+  const tipo = plantadosCrescendo.length > 0 && Math.random() < 0.45 ? "praga" : "encomenda";
+
+  if (tipo === "praga") {
+    const alvo = plantadosCrescendo[(Math.random() * plantadosCrescendo.length) | 0];
+    alvo.p.pest = true;
+    state.event = { type: "praga", plotIndex: alvo.i, startedAt: now, duration: 10 + Math.random() * 4 };
+    const [px, py] = tileCenter(alvo.i % COLS, (alvo.i / COLS) | 0);
+    addFloater("Praga!", [px - 18, py - 50], "#ff7a6e");
+  } else {
+    const disponiveis = cropsDisponiveis();
+    const cropId = disponiveis[(Math.random() * disponiveis.length) | 0];
+    const qtd = 2 + ((Math.random() * 3) | 0);
+    state.event = { type: "encomenda", cropId, qtd, coletado: 0, startedAt: now, duration: 38 + Math.random() * 12 };
+  }
+}
+
+function resolverEventoFalha() {
+  const ev = state.event;
+  if (ev.type === "praga") {
+    const plot = plots[ev.plotIndex];
+    if (plot.pest) {
+      plot.pest = false;
+      plot.crop = null;
+      plot.plantedAt = null;
+      const [px, py] = tileCenter(ev.plotIndex % COLS, (ev.plotIndex / COLS) | 0);
+      addFloater("Plantação perdida!", [px - 30, py], "#ff7a6e");
+    }
+  }
+  state.event = null;
+}
+
+function espantarPraga(index) {
+  const plot = plots[index];
+  if (!plot.pest) return false;
+  plot.pest = false;
+  state.ouro += 8;
+  const [px, py] = tileCenter(index % COLS, (index / COLS) | 0);
+  addFloater("Praga espantada! +8 ouro", [px - 40, py - 20], "#8fe38a");
+  if (state.event && state.event.type === "praga" && state.event.plotIndex === index) {
+    state.event = null;
+    agendarProximoEvento(performance.now() / 1000);
+  }
+  return true;
+}
+
+function updateEventos(now) {
+  if (state.event === null) {
+    if (now >= state.nextEventAt) dispararEvento(now);
+    return;
+  }
+  if (now - state.event.startedAt > state.event.duration) {
+    resolverEventoFalha();
+    agendarProximoEvento(now);
+  }
+}
 
 const floaters = [];
 function addFloater(text, pos, color) {
@@ -174,8 +248,9 @@ function tentarPlantar(index) {
 
 function tentarColher(index) {
   const plot = plots[index];
-  if (plot.crop === null) return;
-  const crop = CROPS[plot.crop];
+  if (plot.crop === null || plot.pest) return;
+  const cropId = plot.crop;
+  const crop = CROPS[cropId];
   const elapsed = performance.now() / 1000 - plot.plantedAt;
   if (elapsed < crop.tempo) return;
   const col = index % COLS, row = (index / COLS) | 0;
@@ -185,6 +260,18 @@ function tentarColher(index) {
   addFloater(`+${crop.venda} moedas`, [pos[0] - 20, pos[1] - 40], "#fff08c");
   plot.crop = null;
   plot.plantedAt = null;
+
+  const ev = state.event;
+  if (ev && ev.type === "encomenda" && ev.cropId === cropId) {
+    ev.coletado += 1;
+    if (ev.coletado >= ev.qtd) {
+      const bonus = 12 + ev.qtd * 4;
+      state.ouro += bonus;
+      addFloater(`Encomenda entregue! +${bonus} ouro`, [BASE_W / 2 - 90, 110], "#ffd23c");
+      state.event = null;
+      agendarProximoEvento(performance.now() / 1000);
+    }
+  }
 }
 
 function tentarDesbloquear(index) {
@@ -316,62 +403,168 @@ function drawTileLocked(cx, cy) {
   ctx.restore();
 }
 
-function drawCrop(cx, cy, cropId, pct) {
-  const crop = CROPS[cropId];
-  const baseY = cy + 6;
-  // sombra
+/* Estilo "Mini Fazenda": contorno grosso escuro + preenchimento saturado,
+   cada cultura com silhueta própria em 4 estágios (não é a mesma forma
+   recolorida). OUTLINE/OUTLINE_W dão o "traço de sticker" característico. */
+const OUTLINE = "#2b1d12";
+const OUTLINE_W = 2.2;
+
+function fillStroke(fillColor) {
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = OUTLINE_W;
+  ctx.stroke();
+}
+
+function leafCluster(cx, cy, n, radius, leafW, leafH, color) {
+  for (let i = 0; i < n; i++) {
+    const ang = (i / n) * Math.PI * 2 + 0.2;
+    ctx.beginPath();
+    ctx.ellipse(cx + Math.cos(ang) * radius, cy + Math.sin(ang) * radius * 0.6, leafW, leafH, ang, 0, Math.PI * 2);
+    fillStroke(color);
+  }
+}
+
+function drawCropShadow(cx, baseY) {
   ctx.fillStyle = "rgba(0,0,0,0.22)";
   ctx.beginPath();
-  ctx.ellipse(cx, baseY + 4, 22, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, baseY + 4, 20, 6, 0, 0, Math.PI * 2);
   ctx.fill();
+}
 
-  if (pct < 0.45) {
-    // broto
-    const h = 10 + pct * 30;
-    ctx.strokeStyle = "#4f9e3f";
-    ctx.lineWidth = 3;
+function drawBatata(cx, cy, stage) {
+  const baseY = cy + 6;
+  drawCropShadow(cx, baseY);
+  if (stage === 0) {
+    // montinho de terra com 2 brotinhos
     ctx.beginPath();
-    ctx.moveTo(cx, baseY);
-    ctx.lineTo(cx, baseY - h);
-    ctx.stroke();
-    ctx.fillStyle = "#6fc95a";
+    ctx.ellipse(cx, baseY, 12, 5, 0, 0, Math.PI * 2);
+    fillStroke("#6b4526");
+    leafCluster(cx, baseY - 6, 2, 4, 4, 2.2, "#6fc95a");
+  } else if (stage === 1) {
+    leafCluster(cx, baseY - 12, 5, 8, 7, 4, "#5fb24a");
     ctx.beginPath();
-    ctx.ellipse(cx - 5, baseY - h, 6, 3.5, -0.5, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.ellipse(cx, baseY - 12, 6, 5, 0, 0, Math.PI * 2);
+    fillStroke("#4a9a3a");
+  } else if (stage === 2) {
+    leafCluster(cx, baseY - 15, 6, 11, 8, 4.5, "#5fb24a");
     ctx.beginPath();
-    ctx.ellipse(cx + 5, baseY - h, 6, 3.5, 0.5, 0, Math.PI * 2);
-    ctx.fill();
-  } else if (pct < 1.0) {
-    // planta crescendo (folhas maiores, cor ainda "verde", sem fruto pleno)
-    for (let i = 0; i < 5; i++) {
-      const ang = (i / 5) * Math.PI * 2;
-      ctx.fillStyle = "#5fb24a";
-      ctx.beginPath();
-      ctx.ellipse(cx + Math.cos(ang) * 10, baseY - 14 + Math.sin(ang) * 6, 9, 5, ang, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.fillStyle = "#4a9a3a";
-    ctx.beginPath();
-    ctx.ellipse(cx, baseY - 14, 7, 6, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.ellipse(cx, baseY - 15, 7, 6, 0, 0, Math.PI * 2);
+    fillStroke("#4a9a3a");
   } else {
-    // pronta pra colher: folhas + "fruto" na cor da cultura
-    for (let i = 0; i < 5; i++) {
-      const ang = (i / 5) * Math.PI * 2 + 0.3;
-      ctx.fillStyle = crop.cor2;
+    leafCluster(cx, baseY - 16, 5, 10, 7.5, 4, "#4a9a3a");
+    // tubérculos saindo da terra
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY, 18, 6, 0, 0, Math.PI * 2);
+    fillStroke("#6b4526");
+    const spuds = [[-8, -2, 8, 6], [7, -1, 7, 5.5], [0, 2, 6, 5]];
+    for (const [dx, dy, w, h] of spuds) {
       ctx.beginPath();
-      ctx.ellipse(cx + Math.cos(ang) * 11, baseY - 16 + Math.sin(ang) * 6, 9, 5, ang, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.ellipse(cx + dx, baseY + dy, w, h, 0.15, 0, Math.PI * 2);
+      fillStroke("#d9a441");
+      ctx.fillStyle = "#8a5a22";
+      ctx.beginPath(); ctx.arc(cx + dx - w * 0.3, baseY + dy, 1.1, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + dx + w * 0.3, baseY + dy + h * 0.2, 1.1, 0, Math.PI * 2); ctx.fill();
     }
-    ctx.fillStyle = crop.cor;
-    ctx.beginPath();
-    ctx.ellipse(cx, baseY - 16, 11, 10, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.35)";
-    ctx.beginPath();
-    ctx.ellipse(cx - 3, baseY - 20, 3.5, 2.5, -0.4, 0, Math.PI * 2);
-    ctx.fill();
   }
+}
+
+function drawMilho(cx, cy, stage) {
+  const baseY = cy + 6;
+  drawCropShadow(cx, baseY);
+  const h = 8 + stage * 9;
+  // caule
+  ctx.beginPath();
+  ctx.moveTo(cx - 2, baseY);
+  ctx.lineTo(cx - 1.5, baseY - h);
+  ctx.lineTo(cx + 1.5, baseY - h);
+  ctx.lineTo(cx + 2, baseY);
+  fillStroke("#4f9e3f");
+  // folhas em lâmina, uma de cada lado, crescem com o estágio
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(cx, baseY - h * 0.55);
+    ctx.quadraticCurveTo(cx + side * (6 + stage * 3), baseY - h * 0.75, cx + side * (3 + stage), baseY - h * 0.3);
+    ctx.quadraticCurveTo(cx + side * 1.5, baseY - h * 0.45, cx, baseY - h * 0.55);
+    fillStroke("#5fb24a");
+  }
+  if (stage >= 3) {
+    // espiga: cilindro amarelo com grãos + palha verde entreaberta
+    const cobY = baseY - h - 4;
+    ctx.beginPath();
+    ctx.moveTo(cx - 5, cobY);
+    ctx.quadraticCurveTo(cx - 6, cobY - 16, cx, cobY - 20);
+    ctx.quadraticCurveTo(cx + 6, cobY - 16, cx + 5, cobY);
+    ctx.closePath();
+    fillStroke("#f4d35e");
+    for (let row = 0; row < 4; row++) {
+      for (let colI = -1; colI <= 1; colI++) {
+        ctx.fillStyle = "#c9971f";
+        ctx.beginPath();
+        ctx.ellipse(cx + colI * 2.6, cobY - 3 - row * 4, 1.1, 1.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(cx, cobY - 18);
+      ctx.quadraticCurveTo(cx + side * 7, cobY - 10, cx + side * 3, cobY + 2);
+      ctx.quadraticCurveTo(cx + side * 1, cobY - 10, cx, cobY - 18);
+      fillStroke("#7fbf5a");
+    }
+  } else if (stage === 2) {
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY - h - 2, 3, 5, 0, 0, Math.PI * 2);
+    fillStroke("#7fbf5a");
+  }
+}
+
+function drawMorango(cx, cy, stage) {
+  const baseY = cy + 6;
+  drawCropShadow(cx, baseY);
+  leafCluster(cx, baseY - 4, 3, 7, 6, 3.5, "#4a9a3a");
+  if (stage === 1) {
+    for (let i = 0; i < 3; i++) {
+      const ang = (i / 3) * Math.PI * 2;
+      const px = cx + Math.cos(ang) * 8, py = baseY - 6 + Math.sin(ang) * 4;
+      ctx.beginPath();
+      for (let p = 0; p < 5; p++) {
+        const a = (p / 5) * Math.PI * 2;
+        ctx.ellipse(px + Math.cos(a) * 2.6, py + Math.sin(a) * 2.6, 1.8, 1.2, a, 0, Math.PI * 2);
+      }
+      fillStroke("#fdf6e3");
+    }
+  } else if (stage === 2) {
+    for (const [dx, dy] of [[-7, -2], [7, -3], [0, 3]]) {
+      ctx.beginPath();
+      ctx.ellipse(cx + dx, baseY - 4 + dy, 4, 5, 0, 0, Math.PI * 2);
+      fillStroke("#7fbf5a");
+    }
+  } else if (stage === 3) {
+    for (const [dx, dy] of [[-8, -1], [8, -2], [0, 5]]) {
+      const py = baseY - 4 + dy;
+      ctx.beginPath();
+      ctx.moveTo(cx + dx, py - 6);
+      ctx.quadraticCurveTo(cx + dx + 6, py - 2, cx + dx, py + 7);
+      ctx.quadraticCurveTo(cx + dx - 6, py - 2, cx + dx, py - 6);
+      fillStroke("#e8434f");
+      ctx.fillStyle = "#f4d35e";
+      for (const [sx, sy] of [[-2, -1], [2, 1], [0, 3], [-1.5, 2]]) {
+        ctx.beginPath(); ctx.arc(cx + dx + sx, py + sy, 0.7, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.ellipse(cx + dx, py - 6, 3.5, 2, 0, 0, Math.PI * 2);
+      fillStroke("#5fb24a");
+    }
+  }
+}
+
+const CROP_DRAWERS = { batata: drawBatata, milho: drawMilho, morango: drawMorango };
+
+function drawCrop(cx, cy, cropId, pct) {
+  const stage = pct >= 1.0 ? 3 : pct >= 0.62 ? 2 : pct >= 0.28 ? 1 : 0;
+  CROP_DRAWERS[cropId](cx, cy, stage);
 }
 
 /* ---------------- Decorações ---------------- */
@@ -382,58 +575,106 @@ function drawHouse() {
   const w = 150, h = 110;
   ctx.save();
   ctx.translate(hx, hy);
-  // sombra
   ctx.fillStyle = "rgba(0,0,0,0.18)";
   ctx.beginPath();
   ctx.ellipse(0, h + 6, w * 0.5, 14, 0, 0, Math.PI * 2);
   ctx.fill();
-  // parede
-  const wallGrad = ctx.createLinearGradient(0, h * 0.35, 0, h);
-  wallGrad.addColorStop(0, "#f3e0b8");
-  wallGrad.addColorStop(1, "#dcc491");
-  ctx.fillStyle = wallGrad;
-  roundRect(-w / 2, h * 0.35, w, h * 0.65, 6);
-  ctx.fill();
-  // telhado
-  ctx.fillStyle = "#b0463a";
+
+  // parede: cor viva chapada (estilo sticker), sem gradiente sutil
   ctx.beginPath();
-  ctx.moveTo(-w / 2 - 14, h * 0.38);
-  ctx.lineTo(0, -8);
-  ctx.lineTo(w / 2 + 14, h * 0.38);
-  ctx.lineTo(w / 2 - 6, h * 0.38);
-  ctx.lineTo(0, 10);
-  ctx.lineTo(-w / 2 + 6, h * 0.38);
+  roundRect(-w / 2, h * 0.35, w, h * 0.65, 8);
+  fillStroke("#f6dfa3");
+  // tábuas horizontais (detalhe de madeira, não realismo)
+  ctx.strokeStyle = "rgba(150,110,60,0.5)";
+  ctx.lineWidth = 1.5;
+  for (let ly = h * 0.48; ly < h * 0.95; ly += 12) {
+    ctx.beginPath(); ctx.moveTo(-w / 2 + 4, ly); ctx.lineTo(w / 2 - 4, ly); ctx.stroke();
+  }
+
+  // telhado vermelho em duas águas, bem exagerado/brinquedo
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 - 18, h * 0.4);
+  ctx.lineTo(0, -14);
+  ctx.lineTo(w / 2 + 18, h * 0.4);
+  ctx.lineTo(w / 2 - 4, h * 0.4);
+  ctx.lineTo(0, 8);
+  ctx.lineTo(-w / 2 + 4, h * 0.4);
   ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = "#8f342a";
+  fillStroke("#d1483a");
   ctx.beginPath();
-  ctx.moveTo(-w / 2 - 14, h * 0.38);
-  ctx.lineTo(0, -8);
-  ctx.lineTo(0, 10);
-  ctx.lineTo(-w / 2 + 6, h * 0.38);
+  ctx.moveTo(-w / 2 - 18, h * 0.4);
+  ctx.lineTo(0, -14);
+  ctx.lineTo(0, 8);
+  ctx.lineTo(-w / 2 + 4, h * 0.4);
   ctx.closePath();
-  ctx.fill();
-  // porta
-  ctx.fillStyle = "#6b4426";
-  roundRect(-16, h * 0.62, 32, h * 0.38, 4);
-  ctx.fill();
-  // janela
-  ctx.fillStyle = "#8fd0e0";
-  roundRect(w * 0.2, h * 0.5, 26, 22, 3);
-  ctx.fill();
-  ctx.strokeStyle = "#6b4426";
-  ctx.lineWidth = 2;
-  roundRect(w * 0.2, h * 0.5, 26, 22, 3);
-  ctx.stroke();
+  fillStroke("#a5352a");
+  // chaminé
   ctx.beginPath();
-  ctx.moveTo(w * 0.2 + 13, h * 0.5);
-  ctx.lineTo(w * 0.2 + 13, h * 0.5 + 22);
-  ctx.moveTo(w * 0.2, h * 0.5 + 11);
-  ctx.lineTo(w * 0.2 + 26, h * 0.5 + 11);
+  roundRect(w * 0.18, -6, 16, 26, 2);
+  fillStroke("#c78a5a");
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.beginPath(); ctx.ellipse(w * 0.18 + 20, -18, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(w * 0.18 + 28, -28, 8, 6, 0, 0, Math.PI * 2); ctx.fill();
+
+  // porta arredondada com maçaneta
+  ctx.beginPath();
+  roundRect(-16, h * 0.6, 32, h * 0.4, 10);
+  fillStroke("#8a5a34");
+  ctx.fillStyle = "#f4d35e";
+  ctx.beginPath(); ctx.arc(10, h * 0.6 + h * 0.2, 2, 0, Math.PI * 2); ctx.fill();
+
+  // janela redonda com caixilho em cruz
+  ctx.beginPath();
+  ctx.arc(w * 0.24, h * 0.55, 15, 0, Math.PI * 2);
+  fillStroke("#a7dbe8");
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = OUTLINE_W;
+  ctx.beginPath();
+  ctx.moveTo(w * 0.24 - 15, h * 0.55); ctx.lineTo(w * 0.24 + 15, h * 0.55);
+  ctx.moveTo(w * 0.24, h * 0.55 - 15); ctx.lineTo(w * 0.24, h * 0.55 + 15);
   ctx.stroke();
+  // jardineira de flores sob a janela
+  ctx.beginPath();
+  roundRect(w * 0.24 - 16, h * 0.55 + 16, 32, 8, 3);
+  fillStroke("#8a5a34");
+  for (const dx of [-9, 0, 9]) {
+    ctx.beginPath();
+    ctx.arc(w * 0.24 + dx, h * 0.55 + 14, 3, 0, Math.PI * 2);
+    fillStroke(dx === 0 ? "#f4d35e" : "#e8434f");
+  }
   ctx.restore();
 
+  drawSilo(hx - 118, hy + 66);
   drawChicken(hx + 96, hy + h - 6);
+}
+
+function drawSilo(x, y) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = "rgba(0,0,0,0.16)";
+  ctx.beginPath();
+  ctx.ellipse(0, 40, 20, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // corpo cilíndrico
+  ctx.beginPath();
+  roundRect(-18, -14, 36, 54, 16);
+  fillStroke("#d8dde0");
+  ctx.strokeStyle = "rgba(120,130,135,0.5)";
+  ctx.lineWidth = 1.5;
+  for (const ly of [4, 16, 28]) {
+    ctx.beginPath(); ctx.moveTo(-18, ly); ctx.lineTo(18, ly); ctx.stroke();
+  }
+  // telhado cônico
+  ctx.beginPath();
+  ctx.moveTo(-22, -12);
+  ctx.lineTo(0, -38);
+  ctx.lineTo(22, -12);
+  ctx.closePath();
+  fillStroke("#b0463a");
+  ctx.beginPath();
+  ctx.arc(0, -38, 3, 0, Math.PI * 2);
+  fillStroke("#8a5a34");
+  ctx.restore();
 }
 
 function drawChicken(x, y) {
@@ -443,27 +684,24 @@ function drawChicken(x, y) {
   ctx.beginPath();
   ctx.ellipse(0, 10, 12, 4, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#f5f0e6";
   ctx.beginPath();
   ctx.ellipse(0, 0, 11, 9, 0, 0, Math.PI * 2);
-  ctx.fill();
+  fillStroke("#f5f0e6");
   ctx.beginPath();
   ctx.ellipse(9, -8, 6, 5.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#e8433a";
+  fillStroke("#f5f0e6");
   ctx.beginPath();
   ctx.moveTo(12, -13);
   ctx.lineTo(16, -15);
   ctx.lineTo(13, -9);
   ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = "#f0a23c";
+  fillStroke("#e8433a");
   ctx.beginPath();
   ctx.moveTo(15, -8);
   ctx.lineTo(21, -7);
   ctx.lineTo(15, -5);
   ctx.closePath();
-  ctx.fill();
+  fillStroke("#f0a23c");
   ctx.fillStyle = "#2a2420";
   ctx.beginPath();
   ctx.arc(11, -9, 1.3, 0, Math.PI * 2);
@@ -478,13 +716,24 @@ function drawFencePost(cx, cy) {
   ctx.beginPath();
   ctx.ellipse(0, 20, 14, 4, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "#8a6540";
-  ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.moveTo(-14, 18); ctx.lineTo(-14, -6); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(14, 18); ctx.lineTo(14, -6); ctx.stroke();
-  ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(-16, 2); ctx.lineTo(16, -2); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-16, 12); ctx.lineTo(16, 8); ctx.stroke();
+  // dois mourões brancos com topo arredondado (cerca de piquete, não cruz)
+  for (const px of [-13, 13]) {
+    ctx.beginPath();
+    roundRect(px - 3.5, -8, 7, 26, 3);
+    fillStroke("#f4ede0");
+    ctx.beginPath();
+    ctx.moveTo(px - 3.5, -8);
+    ctx.lineTo(px, -14);
+    ctx.lineTo(px + 3.5, -8);
+    ctx.closePath();
+    fillStroke("#d1483a");
+  }
+  // travessas horizontais
+  for (const ly of [0, 10]) {
+    ctx.beginPath();
+    roundRect(-16, ly, 32, 4.5, 2);
+    fillStroke("#f4ede0");
+  }
   ctx.restore();
 }
 
@@ -552,7 +801,32 @@ function drawScene() {
       ctx.fillStyle = "#7cd66a";
       roundRect(barX, barY, barW * pct, 6, 3); ctx.fill();
     }
+
+    if (plot.pest) drawPest(cx, cy - 30, now);
   }
+}
+
+function drawPest(cx, cy, now) {
+  const bob = Math.sin(now * 8) * 3;
+  ctx.save();
+  ctx.translate(cx, cy + bob);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 8, 6, 0, 0, Math.PI * 2);
+  fillStroke("#5a4a8a");
+  ctx.beginPath();
+  ctx.arc(-6, -1, 3.5, 0, Math.PI * 2);
+  fillStroke("#5a4a8a");
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 1.5;
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(-2, 5 * s * 0.6);
+    ctx.lineTo(6, 8 * s);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#fdf6e3";
+  ctx.beginPath(); ctx.arc(-7.5, -2, 1.1, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
 }
 
 /* ---------------- HUD ---------------- */
@@ -678,11 +952,39 @@ function drawSky() {
   ctx.fillRect(0, 0, BASE_W, BASE_H);
 }
 
+function drawEventBanner(now) {
+  const ev = state.event;
+  if (!ev) return;
+  const pct = Math.max(0, 1 - (now - ev.startedAt) / ev.duration);
+  const y = 70, w = 360, h = 40, x = BASE_W / 2 - w / 2;
+  ctx.save();
+  ctx.beginPath();
+  roundRect(x, y, w, h, 10);
+  fillStroke(ev.type === "praga" ? "#5a4a8a" : "#3f6b3a");
+  ctx.fillStyle = "#fdf6e3";
+  ctx.font = "bold 14px Trebuchet MS";
+  ctx.textAlign = "center";
+  const label = ev.type === "praga"
+    ? "Praga na lavoura! Clique na planta pra espantar"
+    : `Encomenda: ${ev.coletado}/${ev.qtd} ${CROPS[ev.cropId].nome}`;
+  ctx.fillText(label, BASE_W / 2, y + 18);
+  const barW = w - 20, barX = x + 10, barY = y + 26;
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  roundRect(barX, barY, barW, 6, 3); ctx.fill();
+  ctx.fillStyle = ev.type === "praga" ? "#c7a3ff" : "#ffd23c";
+  roundRect(barX, barY, barW * pct, 6, 3); ctx.fill();
+  ctx.textAlign = "left";
+  ctx.restore();
+}
+
 function frame() {
+  const now = performance.now() / 1000;
+  updateEventos(now);
   drawSky();
   drawDecorations();
   drawScene();
   drawHud();
+  drawEventBanner(now);
   drawCropButtons();
   drawFloaters();
   requestAnimationFrame(frame);
@@ -703,6 +1005,7 @@ function handleClick(px, py) {
     const col = index % COLS, row = (index / COLS) | 0;
     if (pointInTile(px, py, col, row)) {
       const plot = plots[index];
+      if (plot.pest) { espantarPraga(index); return; }
       if (!plot.unlocked) tentarDesbloquear(index);
       else if (plot.crop === null) tentarPlantar(index);
       else tentarColher(index);
