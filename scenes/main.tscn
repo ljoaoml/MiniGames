@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://bqk4x8n2h5vwm"]
+
+[ext_resource type="PackedScene" path="res://scenes/world/farm_grid.tscn" id="1_farm"]
+
+[node name="Main" type="Node2D"]
+
+[node name="FarmGrid" parent="." instance=ExtResource("1_farm")]
+position = Vector2(320, 60)
