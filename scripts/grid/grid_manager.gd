@@ -32,7 +32,8 @@ var tiles: Dictionary = {}
 
 func _ready() -> void:
 	World.farm_grid = self
-	_generate_initial_grid()
+	if not SaveManager.load_game():
+		_generate_initial_grid()
 
 func _generate_initial_grid() -> void:
 	var half := current_size / 2
@@ -85,3 +86,23 @@ func _expand_to(new_size: int) -> void:
 				_create_tile(col, row)
 	current_size = new_size
 	expanded.emit(new_size)
+
+func get_save_data() -> Dictionary:
+	var tiles_data: Array = []
+	for key in tiles.keys():
+		var data: Dictionary = tiles[key].get_save_data()
+		data["col"] = key.x
+		data["row"] = key.y
+		tiles_data.append(data)
+	return {"current_size": current_size, "tiles": tiles_data}
+
+func load_save_data(data: Dictionary) -> void:
+	for tile in tiles.values():
+		tile.queue_free()
+	tiles.clear()
+	current_size = int(data.get("current_size", 10))
+	for tile_data in data.get("tiles", []):
+		var col: int = int(tile_data.col)
+		var row: int = int(tile_data.row)
+		_create_tile(col, row)
+		tiles[Vector2i(col, row)].load_save_data(tile_data)

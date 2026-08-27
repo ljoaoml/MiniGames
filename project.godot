@@ -17,9 +17,12 @@ config/features=PackedStringArray("4.3", "GL Compatibility")
 [autoload]
 
 Crops="*res://scripts/data/crops.gd"
+Trees="*res://scripts/data/trees.gd"
 Economy="*res://scripts/data/economy.gd"
 Levels="*res://scripts/data/levels.gd"
 World="*res://scripts/world.gd"
+NpcBoard="*res://scripts/data/npc_board.gd"
+SaveManager="*res://scripts/data/save_manager.gd"
 
 [rendering]
 
