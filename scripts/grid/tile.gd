@@ -19,6 +19,7 @@ var growth_timer: float = 0.0
 
 func _ready() -> void:
 	area.input_event.connect(_on_area_input_event)
+	area.mouse_entered.connect(_on_mouse_entered)
 	_update_visual()
 
 func _process(delta: float) -> void:
@@ -30,8 +31,8 @@ func _process(delta: float) -> void:
 				state = State.READY
 			_update_visual()
 		State.READY:
-			# Regra do design: mesmo tempo de maturação como prazo pra colher
-			# antes de murchar (Descricao do jogo.md).
+			# Mesmo tempo de maturação como prazo pra colher antes de murchar
+			# (regra descrita em Descricao do jogo.md).
 			growth_timer += delta
 			if growth_timer >= _growth_time():
 				state = State.WITHERED
@@ -42,26 +43,34 @@ func _growth_time() -> float:
 
 func _on_area_input_event(_viewport: Node, event: InputEvent, _shape_idx: int) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_handle_click()
+		_apply_tool()
 
-func _handle_click() -> void:
-	match state:
-		State.EMPTY:
-			state = State.TILLED
-		State.TILLED:
-			_try_plant()
-		State.PLANTED:
-			pass # ainda crescendo, clique não faz nada
-		State.READY:
-			_harvest()
-		State.WITHERED:
-			crop_id = ""
-			state = State.INFERTILE
-		State.INFERTILE:
-			state = State.TILLED
-	_update_visual()
+func _on_mouse_entered() -> void:
+	# Permite "arrastar" a ferramenta selecionada por vários blocos seguidos.
+	if Economy.selected_tool != "none" and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		_apply_tool()
 
-func _try_plant() -> void:
+func _apply_tool() -> void:
+	match Economy.selected_tool:
+		"hoe":
+			_use_hoe()
+		"plant":
+			_use_plant()
+		"harvest":
+			_use_harvest()
+		_:
+			pass # "Mão livre": clique não faz nada, mouse fica livre pra navegar
+
+func _use_hoe() -> void:
+	if state == State.EMPTY or state == State.INFERTILE or state == State.WITHERED:
+		crop_id = ""
+		growth_timer = 0.0
+		state = State.TILLED
+		_update_visual()
+
+func _use_plant() -> void:
+	if state != State.TILLED:
+		return
 	var selected: String = Economy.selected_crop
 	if Economy.seed_inventory.get(selected, 0) <= 0:
 		print("Sem sementes de %s. Compre na loja." % selected)
@@ -70,14 +79,22 @@ func _try_plant() -> void:
 	crop_id = selected
 	growth_timer = 0.0
 	state = State.PLANTED
+	_update_visual()
 
-func _harvest() -> void:
+func _use_harvest() -> void:
+	if state != State.READY:
+		return
 	var data: Dictionary = Crops.CROPS[crop_id]
 	Economy.add_harvest(data.sell_value, data.xp)
 	print("Colheita de %s! (+R$ %d, +%d XP)" % [data.name, data.sell_value, data.xp])
 	crop_id = ""
 	# Terreno usado não volta a virar grama: fica infértil até arar de novo.
 	state = State.INFERTILE
+	_update_visual()
+
+func force_till() -> void:
+	state = State.TILLED
+	_update_visual()
 
 func _update_visual() -> void:
 	if state == State.EMPTY:

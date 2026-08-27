@@ -6,6 +6,6 @@
 [node name="Main" type="Node2D"]
 
 [node name="FarmGrid" parent="." instance=ExtResource("1_farm")]
-position = Vector2(320, 60)
+position = Vector2(320, 220)
 
 [node name="HUD" parent="." instance=ExtResource("2_hud")]

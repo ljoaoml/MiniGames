@@ -4,11 +4,13 @@ signal coins_changed(coins: int)
 signal xp_changed(xp: int)
 signal inventory_changed(crop_id: String, count: int)
 signal selected_crop_changed(crop_id: String)
+signal tool_changed(tool_id: String)
 
 var coins: int = 100
 var xp: int = 0
 var seed_inventory: Dictionary = {}
 var selected_crop: String = "alface"
+var selected_tool: String = "none" # "none", "hoe", "plant", "harvest"
 
 func _ready() -> void:
 	for crop_id in Crops.CROPS.keys():
@@ -24,6 +26,7 @@ func buy_seed(crop_id: String) -> bool:
 	coins_changed.emit(coins)
 	inventory_changed.emit(crop_id, seed_inventory[crop_id])
 	selected_crop_changed.emit(crop_id)
+	select_tool("plant")
 	return true
 
 func consume_seed(crop_id: String) -> void:
@@ -35,3 +38,7 @@ func add_harvest(sell_value: int, xp_gain: int) -> void:
 	xp += xp_gain
 	coins_changed.emit(coins)
 	xp_changed.emit(xp)
+
+func select_tool(tool_id: String) -> void:
+	selected_tool = tool_id
+	tool_changed.emit(tool_id)

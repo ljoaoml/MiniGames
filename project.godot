@@ -18,6 +18,8 @@ config/features=PackedStringArray("4.3", "GL Compatibility")
 
 Crops="*res://scripts/data/crops.gd"
 Economy="*res://scripts/data/economy.gd"
+Levels="*res://scripts/data/levels.gd"
+World="*res://scripts/world.gd"
 
 [rendering]
 
