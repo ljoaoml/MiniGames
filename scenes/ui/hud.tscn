@@ -1,0 +1,44 @@
+[gd_scene load_steps=2 format=3 uid="uid://b2f8h5x3q7wke"]
+
+[ext_resource type="Script" path="res://scripts/ui/hud.gd" id="1_hud"]
+
+[node name="HUD" type="CanvasLayer"]
+script = ExtResource("1_hud")
+
+[node name="Margin" type="MarginContainer" parent="."]
+offset_right = 420.0
+offset_bottom = 160.0
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="VBox" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+
+[node name="CoinsLabel" type="Label" parent="Margin/VBox"]
+layout_mode = 2
+text = "Moedas: R$ 0"
+
+[node name="XPLabel" type="Label" parent="Margin/VBox"]
+layout_mode = 2
+text = "XP: 0"
+
+[node name="SelectedLabel" type="Label" parent="Margin/VBox"]
+layout_mode = 2
+text = "Plantando: -"
+
+[node name="Shop" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+
+[node name="AlfaceButton" type="Button" parent="Margin/VBox/Shop"]
+layout_mode = 2
+text = "Alface (R$ 5) - Estoque: 0"
+
+[node name="MorangoButton" type="Button" parent="Margin/VBox/Shop"]
+layout_mode = 2
+text = "Morango (R$ 15) - Estoque: 0"
+
+[node name="TrigoButton" type="Button" parent="Margin/VBox/Shop"]
+layout_mode = 2
+text = "Trigo (R$ 35) - Estoque: 0"

@@ -14,6 +14,11 @@ config/name="MiniFazenda"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
 
+[autoload]
+
+Crops="*res://scripts/data/crops.gd"
+Economy="*res://scripts/data/economy.gd"
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
