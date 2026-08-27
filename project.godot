@@ -18,6 +18,7 @@ config/features=PackedStringArray("4.3", "GL Compatibility")
 
 Crops="*res://scripts/data/crops.gd"
 Trees="*res://scripts/data/trees.gd"
+Animals="*res://scripts/data/animals.gd"
 Economy="*res://scripts/data/economy.gd"
 Levels="*res://scripts/data/levels.gd"
 World="*res://scripts/world.gd"

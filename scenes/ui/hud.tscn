@@ -5,155 +5,242 @@
 [node name="HUD" type="CanvasLayer"]
 script = ExtResource("1_hud")
 
-[node name="Panel" type="PanelContainer" parent="."]
-offset_right = 460.0
-offset_bottom = 630.0
+[node name="TopBar" type="PanelContainer" parent="."]
+anchor_right = 1.0
+offset_bottom = 40.0
 
-[node name="Scroll" type="ScrollContainer" parent="Panel"]
+[node name="Margin" type="MarginContainer" parent="TopBar"]
 layout_mode = 2
-horizontal_scroll_mode = 0
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 4
 
-[node name="Margin" type="MarginContainer" parent="Panel/Scroll"]
+[node name="HBox" type="HBoxContainer" parent="TopBar/Margin"]
 layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/margin_left = 10
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 10
-theme_override_constants/margin_bottom = 10
+theme_override_constants/separation = 16
 
-[node name="VBox" type="VBoxContainer" parent="Panel/Scroll/Margin"]
-layout_mode = 2
-theme_override_constants/separation = 4
-
-[node name="CoinsLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
+[node name="CoinsLabel" type="Label" parent="TopBar/Margin/HBox"]
 layout_mode = 2
 text = "Moedas: R$ 0"
 
-[node name="LevelLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
+[node name="LevelLabel" type="Label" parent="TopBar/Margin/HBox"]
 layout_mode = 2
 text = "Nível: 1"
 
-[node name="XPLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
+[node name="XPLabel" type="Label" parent="TopBar/Margin/HBox"]
 layout_mode = 2
 text = "XP: 0 / 50"
 
-[node name="AreaLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
+[node name="AreaLabel" type="Label" parent="TopBar/Margin/HBox"]
 layout_mode = 2
 text = "Área: 10x10"
 
-[node name="ExpandButton" type="Button" parent="Panel/Scroll/Margin/VBox"]
+[node name="ExpandButton" type="Button" parent="TopBar/Margin/HBox"]
 layout_mode = 2
 text = "Expandir"
 
-[node name="SaveButton" type="Button" parent="Panel/Scroll/Margin/VBox"]
+[node name="SaveButton" type="Button" parent="TopBar/Margin/HBox"]
 layout_mode = 2
 text = "Salvar agora"
 
-[node name="HSeparator1" type="HSeparator" parent="Panel/Scroll/Margin/VBox"]
+[node name="InfoBar" type="PanelContainer" parent="."]
+anchor_right = 1.0
+offset_top = 40.0
+offset_bottom = 96.0
+
+[node name="Margin" type="MarginContainer" parent="InfoBar"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 4
+
+[node name="VBox" type="VBoxContainer" parent="InfoBar/Margin"]
 layout_mode = 2
 
-[node name="ToolsRow" type="HBoxContainer" parent="Panel/Scroll/Margin/VBox"]
+[node name="RequestLabel" type="Label" parent="InfoBar/Margin/VBox"]
 layout_mode = 2
+autowrap_mode = 3
+text = "Pedido: ..."
 
-[node name="NoneButton" type="Button" parent="Panel/Scroll/Margin/VBox/ToolsRow"]
+[node name="StatusLabel" type="Label" parent="InfoBar/Margin/VBox"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Botão direito + arraste move a câmera. Scroll dá zoom."
+
+[node name="ToolsPanel" type="PanelContainer" parent="."]
+visible = false
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -330.0
+offset_right = 620.0
+offset_bottom = -50.0
+
+[node name="Margin" type="MarginContainer" parent="ToolsPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="Grid" type="GridContainer" parent="ToolsPanel/Margin"]
+layout_mode = 2
+columns = 3
+
+[node name="NoneButton" type="Button" parent="ToolsPanel/Margin/Grid"]
 layout_mode = 2
 size_flags_horizontal = 3
 toggle_mode = true
 text = "Mão livre"
 
-[node name="HoeButton" type="Button" parent="Panel/Scroll/Margin/VBox/ToolsRow"]
+[node name="HoeButton" type="Button" parent="ToolsPanel/Margin/Grid"]
 layout_mode = 2
 size_flags_horizontal = 3
 toggle_mode = true
 text = "Enxada"
 
-[node name="PlantButton" type="Button" parent="Panel/Scroll/Margin/VBox/ToolsRow"]
+[node name="PlantButton" type="Button" parent="ToolsPanel/Margin/Grid"]
 layout_mode = 2
 size_flags_horizontal = 3
 toggle_mode = true
 text = "Plantar"
 
-[node name="PlantTreeButton" type="Button" parent="Panel/Scroll/Margin/VBox/ToolsRow"]
+[node name="PlantTreeButton" type="Button" parent="ToolsPanel/Margin/Grid"]
 layout_mode = 2
 size_flags_horizontal = 3
 toggle_mode = true
 text = "Plantar Árvore"
 
-[node name="QuantityRow" type="HBoxContainer" parent="Panel/Scroll/Margin/VBox"]
+[node name="PlantAnimalButton" type="Button" parent="ToolsPanel/Margin/Grid"]
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Plantar Animal"
+
+[node name="RemoveButton" type="Button" parent="ToolsPanel/Margin/Grid"]
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Remover"
+
+[node name="ShopPanel" type="PanelContainer" parent="."]
+visible = false
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -330.0
+offset_right = 620.0
+offset_bottom = -50.0
+
+[node name="Margin" type="MarginContainer" parent="ShopPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBox" type="VBoxContainer" parent="ShopPanel/Margin"]
 layout_mode = 2
 
-[node name="QuantityLabel" type="Label" parent="Panel/Scroll/Margin/VBox/QuantityRow"]
+[node name="QuantityRow" type="HBoxContainer" parent="ShopPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="QuantityLabel" type="Label" parent="ShopPanel/Margin/VBox/QuantityRow"]
 layout_mode = 2
 text = "Quantidade a comprar:"
 
-[node name="QuantitySpin" type="SpinBox" parent="Panel/Scroll/Margin/VBox/QuantityRow"]
+[node name="QuantitySpin" type="SpinBox" parent="ShopPanel/Margin/VBox/QuantityRow"]
 layout_mode = 2
 min_value = 1.0
 max_value = 99.0
 value = 1.0
 
-[node name="SelectedCropLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
+[node name="ShopTabs" type="TabContainer" parent="ShopPanel/Margin/VBox"]
 layout_mode = 2
-text = "Semente selecionada: -"
+size_flags_vertical = 3
 
-[node name="SelectedTreeLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
-layout_mode = 2
-text = "Árvore selecionada: -"
-
-[node name="HSeparator2" type="HSeparator" parent="Panel/Scroll/Margin/VBox"]
-layout_mode = 2
-
-[node name="ShopCropsLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
-layout_mode = 2
-text = "Loja de sementes (compra e seleciona)"
-
-[node name="ShopCropsGrid" type="GridContainer" parent="Panel/Scroll/Margin/VBox"]
+[node name="Sementes" type="GridContainer" parent="ShopPanel/Margin/VBox/ShopTabs"]
 layout_mode = 2
 columns = 2
 
-[node name="ShopTreesLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
-layout_mode = 2
-text = "Loja de mudas de árvore"
-
-[node name="ShopTreesGrid" type="GridContainer" parent="Panel/Scroll/Margin/VBox"]
+[node name="Árvores" type="GridContainer" parent="ShopPanel/Margin/VBox/ShopTabs"]
+visible = false
 layout_mode = 2
 columns = 2
 
-[node name="HSeparator3" type="HSeparator" parent="Panel/Scroll/Margin/VBox"]
-layout_mode = 2
-
-[node name="InventoryCropsLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
-layout_mode = 2
-text = "Sementes no estoque (clique pra só selecionar)"
-
-[node name="InventoryCropsGrid" type="GridContainer" parent="Panel/Scroll/Margin/VBox"]
+[node name="Animais" type="GridContainer" parent="ShopPanel/Margin/VBox/ShopTabs"]
+visible = false
 layout_mode = 2
 columns = 2
 
-[node name="InventoryTreesLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
-layout_mode = 2
-text = "Mudas no estoque (clique pra só selecionar)"
+[node name="InventoryPanel" type="PanelContainer" parent="."]
+visible = false
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -330.0
+offset_right = 620.0
+offset_bottom = -50.0
 
-[node name="InventoryTreesGrid" type="GridContainer" parent="Panel/Scroll/Margin/VBox"]
+[node name="Margin" type="MarginContainer" parent="InventoryPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBox" type="VBoxContainer" parent="InventoryPanel/Margin"]
+layout_mode = 2
+
+[node name="SelectedLabel" type="Label" parent="InventoryPanel/Margin/VBox"]
+layout_mode = 2
+text = "Selecionado: -"
+
+[node name="InvTabs" type="TabContainer" parent="InventoryPanel/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Sementes" type="GridContainer" parent="InventoryPanel/Margin/VBox/InvTabs"]
 layout_mode = 2
 columns = 2
 
-[node name="HSeparator4" type="HSeparator" parent="Panel/Scroll/Margin/VBox"]
+[node name="Árvores" type="GridContainer" parent="InventoryPanel/Margin/VBox/InvTabs"]
+visible = false
 layout_mode = 2
+columns = 2
 
-[node name="RequestLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
+[node name="Animais" type="GridContainer" parent="InventoryPanel/Margin/VBox/InvTabs"]
+visible = false
 layout_mode = 2
-text = "Quadro de Pedidos"
+columns = 2
 
-[node name="RequestBody" type="Label" parent="Panel/Scroll/Margin/VBox"]
-layout_mode = 2
-autowrap_mode = 3
-text = "..."
+[node name="BottomBar" type="PanelContainer" parent="."]
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -50.0
 
-[node name="HSeparator5" type="HSeparator" parent="Panel/Scroll/Margin/VBox"]
+[node name="Margin" type="MarginContainer" parent="BottomBar"]
 layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 6
 
-[node name="StatusLabel" type="Label" parent="Panel/Scroll/Margin/VBox"]
+[node name="HBox" type="HBoxContainer" parent="BottomBar/Margin"]
 layout_mode = 2
-autowrap_mode = 3
-text = "Botão direito + arraste move a câmera. Scroll dá zoom."
+theme_override_constants/separation = 8
+
+[node name="ToolsToggle" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+toggle_mode = true
+text = "Ferramentas"
+
+[node name="ShopToggle" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+toggle_mode = true
+text = "Loja"
+
+[node name="InventoryToggle" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+toggle_mode = true
+text = "Inventário"
