@@ -5,6 +5,7 @@ signal xp_changed(xp: int)
 signal inventory_changed(crop_id: String, count: int)
 signal selected_crop_changed(crop_id: String)
 signal tool_changed(tool_id: String)
+signal status_message(text: String)
 
 var coins: int = 100
 var xp: int = 0
@@ -42,3 +43,6 @@ func add_harvest(sell_value: int, xp_gain: int) -> void:
 func select_tool(tool_id: String) -> void:
 	selected_tool = tool_id
 	tool_changed.emit(tool_id)
+
+func emit_status(text: String) -> void:
+	status_message.emit(text)

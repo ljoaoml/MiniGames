@@ -46,18 +46,21 @@ func _on_area_input_event(_viewport: Node, event: InputEvent, _shape_idx: int) -
 		_apply_tool()
 
 func _on_mouse_entered() -> void:
-	# Permite "arrastar" a ferramenta selecionada por vários blocos seguidos.
-	if Economy.selected_tool != "none" and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+	# Permite "arrastar" a ferramenta selecionada (ou a colheita) por vários blocos seguidos.
+	var draggable: bool = state == State.READY or Economy.selected_tool != "none"
+	if draggable and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_apply_tool()
 
 func _apply_tool() -> void:
+	# Colher não exige ferramenta selecionada — funciona sempre que o bloco estiver pronto.
+	if state == State.READY:
+		_use_harvest()
+		return
 	match Economy.selected_tool:
 		"hoe":
 			_use_hoe()
 		"plant":
 			_use_plant()
-		"harvest":
-			_use_harvest()
 		_:
 			pass # "Mão livre": clique não faz nada, mouse fica livre pra navegar
 
@@ -73,7 +76,7 @@ func _use_plant() -> void:
 		return
 	var selected: String = Economy.selected_crop
 	if Economy.seed_inventory.get(selected, 0) <= 0:
-		print("Sem sementes de %s. Compre na loja." % selected)
+		Economy.emit_status("Sem sementes de %s. Compre na loja." % Crops.CROPS[selected].name)
 		return
 	Economy.consume_seed(selected)
 	crop_id = selected
@@ -86,7 +89,7 @@ func _use_harvest() -> void:
 		return
 	var data: Dictionary = Crops.CROPS[crop_id]
 	Economy.add_harvest(data.sell_value, data.xp)
-	print("Colheita de %s! (+R$ %d, +%d XP)" % [data.name, data.sell_value, data.xp])
+	Economy.emit_status("Colheita de %s! (+R$ %d, +%d XP)" % [data.name, data.sell_value, data.xp])
 	crop_id = ""
 	# Terreno usado não volta a virar grama: fica infértil até arar de novo.
 	state = State.INFERTILE

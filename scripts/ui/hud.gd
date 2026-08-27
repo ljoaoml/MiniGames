@@ -1,17 +1,17 @@
 extends CanvasLayer
 
-@onready var coins_label: Label = $Margin/VBox/CoinsLabel
-@onready var level_label: Label = $Margin/VBox/LevelLabel
-@onready var xp_label: Label = $Margin/VBox/XPLabel
-@onready var area_label: Label = $Margin/VBox/AreaLabel
-@onready var expand_button: Button = $Margin/VBox/ExpandButton
-@onready var selected_crop_label: Label = $Margin/VBox/SelectedCropLabel
-@onready var shop_row: HBoxContainer = $Margin/VBox/ShopRow
+@onready var coins_label: Label = $Panel/Margin/VBox/CoinsLabel
+@onready var level_label: Label = $Panel/Margin/VBox/LevelLabel
+@onready var xp_label: Label = $Panel/Margin/VBox/XPLabel
+@onready var area_label: Label = $Panel/Margin/VBox/AreaLabel
+@onready var expand_button: Button = $Panel/Margin/VBox/ExpandButton
+@onready var selected_crop_label: Label = $Panel/Margin/VBox/SelectedCropLabel
+@onready var shop_grid: GridContainer = $Panel/Margin/VBox/ShopGrid
+@onready var status_label: Label = $Panel/Margin/VBox/StatusLabel
 @onready var tool_buttons: Dictionary = {
-	"none": $Margin/VBox/ToolsRow/NoneButton,
-	"hoe": $Margin/VBox/ToolsRow/HoeButton,
-	"plant": $Margin/VBox/ToolsRow/PlantButton,
-	"harvest": $Margin/VBox/ToolsRow/HarvestButton,
+	"none": $Panel/Margin/VBox/ToolsRow/NoneButton,
+	"hoe": $Panel/Margin/VBox/ToolsRow/HoeButton,
+	"plant": $Panel/Margin/VBox/ToolsRow/PlantButton,
 }
 
 var crop_buttons: Dictionary = {}
@@ -22,11 +22,13 @@ func _ready() -> void:
 	Economy.inventory_changed.connect(_on_inventory_changed)
 	Economy.selected_crop_changed.connect(_on_selected_crop_changed)
 	Economy.tool_changed.connect(_on_tool_changed)
+	Economy.status_message.connect(_on_status_message)
 
 	for crop_id in Crops.CROPS.keys():
 		var button := Button.new()
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.pressed.connect(_on_buy_pressed.bind(crop_id))
-		shop_row.add_child(button)
+		shop_grid.add_child(button)
 		crop_buttons[crop_id] = button
 		_update_crop_button(crop_id)
 
@@ -44,7 +46,8 @@ func _ready() -> void:
 
 func _on_buy_pressed(crop_id: String) -> void:
 	if not Economy.buy_seed(crop_id):
-		print("Moedas insuficientes para comprar semente de %s." % crop_id)
+		var data: Dictionary = Crops.CROPS[crop_id]
+		_on_status_message("Moedas insuficientes para comprar %s (custa R$ %d)." % [data.name, data.cost])
 
 func _on_tool_pressed(tool_id: String) -> void:
 	Economy.select_tool(tool_id)
@@ -52,7 +55,9 @@ func _on_tool_pressed(tool_id: String) -> void:
 func _on_expand_pressed() -> void:
 	var result: Dictionary = World.farm_grid.try_expand()
 	if not result.success:
-		print(result.reason)
+		_on_status_message(result.reason)
+	else:
+		_on_status_message("Área expandida!")
 	_update_area_label()
 
 func _on_expanded(_new_size: int) -> void:
@@ -77,11 +82,14 @@ func _on_tool_changed(tool_id: String) -> void:
 	for id in tool_buttons.keys():
 		tool_buttons[id].button_pressed = id == tool_id
 
+func _on_status_message(text: String) -> void:
+	status_label.text = text
+
 func _update_crop_button(crop_id: String) -> void:
 	var data: Dictionary = Crops.CROPS[crop_id]
 	var count: int = Economy.seed_inventory.get(crop_id, 0)
 	var button: Button = crop_buttons[crop_id]
-	button.text = "%s (R$ %d) - Estoque: %d" % [data.name, data.cost, count]
+	button.text = "%s R$%d (%d)" % [data.name, data.cost, count]
 
 func _update_area_label() -> void:
 	var size: int = World.farm_grid.current_size
