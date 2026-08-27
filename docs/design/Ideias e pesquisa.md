@@ -1,0 +1,4 @@
+- Procurar repositórios e locais com assets, icons, designs para o projeto de jogo estilo MiniFazenda (facebook)
+- Estudar como descrever melhor o projeto. 
+- Fazer o jogo em um formato para colocar na steam, com a ideia de um projeto gratis, mas para testar seria melhor usar uma versao que rode no github pages ?(?)
+- Comecar o projeto com foco em um 

@@ -1,0 +1,246 @@
+[gd_scene load_steps=2 format=3 uid="uid://b2f8h5x3q7wke"]
+
+[ext_resource type="Script" path="res://scripts/ui/hud.gd" id="1_hud"]
+
+[node name="HUD" type="CanvasLayer"]
+script = ExtResource("1_hud")
+
+[node name="TopBar" type="PanelContainer" parent="."]
+anchor_right = 1.0
+offset_bottom = 40.0
+
+[node name="Margin" type="MarginContainer" parent="TopBar"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 4
+
+[node name="HBox" type="HBoxContainer" parent="TopBar/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="CoinsLabel" type="Label" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "Moedas: R$ 0"
+
+[node name="LevelLabel" type="Label" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "Nível: 1"
+
+[node name="XPLabel" type="Label" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "XP: 0 / 50"
+
+[node name="AreaLabel" type="Label" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "Área: 10x10"
+
+[node name="ExpandButton" type="Button" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "Expandir"
+
+[node name="SaveButton" type="Button" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "Salvar agora"
+
+[node name="InfoBar" type="PanelContainer" parent="."]
+anchor_right = 1.0
+offset_top = 40.0
+offset_bottom = 96.0
+
+[node name="Margin" type="MarginContainer" parent="InfoBar"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 4
+
+[node name="VBox" type="VBoxContainer" parent="InfoBar/Margin"]
+layout_mode = 2
+
+[node name="RequestLabel" type="Label" parent="InfoBar/Margin/VBox"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Pedido: ..."
+
+[node name="StatusLabel" type="Label" parent="InfoBar/Margin/VBox"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Botão direito + arraste move a câmera. Scroll dá zoom."
+
+[node name="ToolsPanel" type="PanelContainer" parent="."]
+visible = false
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -330.0
+offset_right = 620.0
+offset_bottom = -50.0
+
+[node name="Margin" type="MarginContainer" parent="ToolsPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="Grid" type="GridContainer" parent="ToolsPanel/Margin"]
+layout_mode = 2
+columns = 3
+
+[node name="NoneButton" type="Button" parent="ToolsPanel/Margin/Grid"]
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Mão livre"
+
+[node name="HoeButton" type="Button" parent="ToolsPanel/Margin/Grid"]
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Enxada"
+
+[node name="PlantButton" type="Button" parent="ToolsPanel/Margin/Grid"]
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Plantar"
+
+[node name="PlantTreeButton" type="Button" parent="ToolsPanel/Margin/Grid"]
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Plantar Árvore"
+
+[node name="PlantAnimalButton" type="Button" parent="ToolsPanel/Margin/Grid"]
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Plantar Animal"
+
+[node name="RemoveButton" type="Button" parent="ToolsPanel/Margin/Grid"]
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Remover"
+
+[node name="ShopPanel" type="PanelContainer" parent="."]
+visible = false
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -330.0
+offset_right = 620.0
+offset_bottom = -50.0
+
+[node name="Margin" type="MarginContainer" parent="ShopPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBox" type="VBoxContainer" parent="ShopPanel/Margin"]
+layout_mode = 2
+
+[node name="QuantityRow" type="HBoxContainer" parent="ShopPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="QuantityLabel" type="Label" parent="ShopPanel/Margin/VBox/QuantityRow"]
+layout_mode = 2
+text = "Quantidade a comprar:"
+
+[node name="QuantitySpin" type="SpinBox" parent="ShopPanel/Margin/VBox/QuantityRow"]
+layout_mode = 2
+min_value = 1.0
+max_value = 99.0
+value = 1.0
+
+[node name="ShopTabs" type="TabContainer" parent="ShopPanel/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Sementes" type="GridContainer" parent="ShopPanel/Margin/VBox/ShopTabs"]
+layout_mode = 2
+columns = 2
+
+[node name="Árvores" type="GridContainer" parent="ShopPanel/Margin/VBox/ShopTabs"]
+visible = false
+layout_mode = 2
+columns = 2
+
+[node name="Animais" type="GridContainer" parent="ShopPanel/Margin/VBox/ShopTabs"]
+visible = false
+layout_mode = 2
+columns = 2
+
+[node name="InventoryPanel" type="PanelContainer" parent="."]
+visible = false
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -330.0
+offset_right = 620.0
+offset_bottom = -50.0
+
+[node name="Margin" type="MarginContainer" parent="InventoryPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBox" type="VBoxContainer" parent="InventoryPanel/Margin"]
+layout_mode = 2
+
+[node name="SelectedLabel" type="Label" parent="InventoryPanel/Margin/VBox"]
+layout_mode = 2
+text = "Selecionado: -"
+
+[node name="InvTabs" type="TabContainer" parent="InventoryPanel/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Sementes" type="GridContainer" parent="InventoryPanel/Margin/VBox/InvTabs"]
+layout_mode = 2
+columns = 2
+
+[node name="Árvores" type="GridContainer" parent="InventoryPanel/Margin/VBox/InvTabs"]
+visible = false
+layout_mode = 2
+columns = 2
+
+[node name="Animais" type="GridContainer" parent="InventoryPanel/Margin/VBox/InvTabs"]
+visible = false
+layout_mode = 2
+columns = 2
+
+[node name="BottomBar" type="PanelContainer" parent="."]
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -50.0
+
+[node name="Margin" type="MarginContainer" parent="BottomBar"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 6
+
+[node name="HBox" type="HBoxContainer" parent="BottomBar/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ToolsToggle" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+toggle_mode = true
+text = "Ferramentas"
+
+[node name="ShopToggle" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+toggle_mode = true
+text = "Loja"
+
+[node name="InventoryToggle" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+toggle_mode = true
+text = "Inventário"

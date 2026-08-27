@@ -1,0 +1,31 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes below until another
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="MiniFazenda"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3", "GL Compatibility")
+
+[autoload]
+
+Crops="*res://scripts/data/crops.gd"
+Trees="*res://scripts/data/trees.gd"
+Animals="*res://scripts/data/animals.gd"
+Economy="*res://scripts/data/economy.gd"
+Levels="*res://scripts/data/levels.gd"
+World="*res://scripts/world.gd"
+NpcBoard="*res://scripts/data/npc_board.gd"
+SaveManager="*res://scripts/data/save_manager.gd"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
