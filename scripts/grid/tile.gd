@@ -25,7 +25,6 @@ var state_started_at: float = 0.0
 
 func _ready() -> void:
 	area.input_event.connect(_on_area_input_event)
-	area.mouse_entered.connect(_on_mouse_entered)
 	_update_visual()
 
 func _process(_delta: float) -> void:
@@ -52,12 +51,6 @@ func _growth_time() -> float:
 
 func _on_area_input_event(_viewport: Node, event: InputEvent, _shape_idx: int) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_apply_tool()
-
-func _on_mouse_entered() -> void:
-	# Permite "arrastar" a ferramenta selecionada (ou a colheita) por vários blocos seguidos.
-	var draggable: bool = state == State.READY or Economy.selected_tool != "none"
-	if draggable and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_apply_tool()
 
 func _apply_tool() -> void:
